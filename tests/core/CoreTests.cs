@@ -237,6 +237,7 @@ public partial class CoreTests : Node
         var timings = new List<double>();
         int failed = 0;
         int replayFailed = 0;
+        int differentialFailed = 0;
 
         foreach (string band in bands)
         {
@@ -275,6 +276,15 @@ public partial class CoreTests : Node
                     }
                     continue;
                 }
+                if (!ReplayBoth(spec, result.Solution.Route))
+                {
+                    differentialFailed++;
+                    if (differentialFailed <= 5)
+                    {
+                        GD.PushError($"StepCore 差分失败: band={band} seed={seed}");
+                    }
+                    continue;
+                }
                 scores.Add(result.Score.Difficulty);
             }
             scoresByBand[band] = scores;
@@ -282,6 +292,7 @@ public partial class CoreTests : Node
 
         Check(failed == 0, $"生成: 180 个 seed 全部成功（失败 {failed}）");
         Check(replayFailed == 0, $"生成: 全部路线可重放通关（失败 {replayFailed}）");
+        Check(differentialFailed == 0, $"生成: Step 与 StepCore 逐步一致（失败 {differentialFailed}）");
 
         var all = new List<int>();
         foreach (string band in bands)
@@ -369,6 +380,38 @@ public partial class CoreTests : Node
             }
         }
         return st.Head.Equals(spec.Goal);
+    }
+
+    /// <summary>差分：同一路线上 Step（Godot 字典）与 StepCore（纯 C#）逐步结果必须一致。</summary>
+    private static bool ReplayBoth(LevelSpec spec, string route)
+    {
+        var viaStep = new RuleState();
+        var viaCore = new RuleState();
+        viaStep.Setup(spec);
+        viaStep.Start();
+        viaCore.Setup(spec);
+        viaCore.Start();
+        foreach (char ch in route)
+        {
+            Vector2I dir = DirForChar(ch);
+            Godot.Collections.Dictionary a = viaStep.Step(dir);
+            RuleState.StepOutcome b = viaCore.StepCore(new Cell(dir.X, dir.Y));
+            Vector2I aFood = a["food_cell"].AsVector2I();
+            if (a["accepted"].AsBool() != b.Accepted
+                || a["truncated"].AsBool() != b.Truncated
+                || a["ate_food"].AsBool() != b.AteFood
+                || a["grew"].AsBool() != b.Grew
+                || a["won"].AsBool() != b.Won
+                || a["deadlock_msg"].AsString() != (b.DeadlockMsg ?? "")
+                || a["steps"].AsInt32() != viaCore.GetSteps()
+                || a["finished"].AsBool() != viaCore.GetFinished()
+                || aFood.X != b.FoodCell.X
+                || aFood.Y != b.FoodCell.Y)
+            {
+                return false;
+            }
+        }
+        return viaStep.Head.Equals(viaCore.Head);
     }
 
     private async Task TestGoldenLevels()

@@ -122,7 +122,12 @@ public partial class RuleState : RefCounted
     /// <summary>由 LevelSpec 注入静态数据（生成器 / 测试与 GDScript 适配层共用）。</summary>
     internal void Setup(LevelSpec spec)
     {
-        _grid = new GridModel(spec.Origin, spec.Width, spec.Height);
+        // 复用 GridModel 与集合，避免每次候选 / 每次重放重建（ResetToSpec 依赖此行为）。
+        _grid.Origin = spec.Origin;
+        _grid.Width = spec.Width;
+        _grid.Height = spec.Height;
+        _grid.Floor.Clear();
+        _grid.Obstacles.Clear();
         foreach (Cell c in spec.Floor)
         {
             _grid.Floor.Add(c);
@@ -191,85 +196,112 @@ public partial class RuleState : RefCounted
         return ToGodotArray(GetClaimedCellsInternal());
     }
 
-    /// <summary>一次方向输入；无效移动返回 accepted=false 且不计步。返回字段供 GDScript 适配层转换。</summary>
+    /// <summary>复用实例：重置静态数据并回到开局（生成器每候选使用，避免反复 new）。</summary>
+    internal void ResetToSpec(LevelSpec spec)
+    {
+        Setup(spec);
+        Start();
+    }
+
+    /// <summary>一次方向输入（GDScript 适配层）：内部走 StepCore，再转 Godot 字典。</summary>
     public Godot.Collections.Dictionary Step(Vector2I dir)
     {
-        bool accepted = false;
-        bool truncated = false;
-        bool ateFood = false;
-        Cell foodCell = Cell.Zero;
-        bool grew = false;
-        bool won = false;
-        string deadlockMsg = "";
-        List<Cell> addedCells = new();
-
-        if (!_finished)
-        {
-            Cell next = new Cell(Head.X + dir.X, Head.Y + dir.Y);
-            MoveKind kind = ClassifyMove(next);
-            if (kind == MoveKind.Body)
-            {
-                // 情况 B：踏入自身身体 -> 截断到该格
-                int bodyIdx = _trail.IndexOf(next);
-                _trail.RemoveRange(bodyIdx + 1, _trail.Count - bodyIdx - 1);
-                _steps += 1;
-                accepted = true;
-                truncated = true;
-            }
-            else if (kind == MoveKind.Walk)
-            {
-                // 情况 A：可走格且身体未达硬上限
-                _trail.Add(next);
-                if (_foods.Remove(next))
-                {
-                    _foodEaten += 1;
-                    _maxLen += _foodLenGain;
-                    ateFood = true;
-                    foodCell = next;
-                }
-                _steps += 1;
-                accepted = true;
-            }
-
-            if (accepted)
-            {
-                if (_steps > 0 && _steps % _growthInterval == 0)
-                {
-                    grew = true;
-                    addedCells = Grow();
-                }
-                if (Head.Equals(_goal))
-                {
-                    won = true;
-                    _finished = true;
-                }
-                else if (!SuppressDeadlockChecks)
-                {
-                    deadlockMsg = CheckDeadlock();
-                    if (deadlockMsg.Length > 0)
-                    {
-                        _finished = true;
-                    }
-                }
-            }
-        }
-
+        StepOutcome outcome = StepCore(new Cell(dir.X, dir.Y));
         var res = new Godot.Collections.Dictionary
         {
-            { "accepted", accepted },
-            { "truncated", truncated },
-            { "ate_food", ateFood },
-            { "food_cell", new Vector2I(foodCell.X, foodCell.Y) },
-            { "grew", grew },
-            { "won", won },
-            { "deadlock_msg", deadlockMsg },
-            { "added_mech_cells", ToGodotArray(addedCells) },
+            { "accepted", outcome.Accepted },
+            { "truncated", outcome.Truncated },
+            { "ate_food", outcome.AteFood },
+            { "food_cell", new Vector2I(outcome.FoodCell.X, outcome.FoodCell.Y) },
+            { "grew", outcome.Grew },
+            { "won", outcome.Won },
+            { "deadlock_msg", outcome.DeadlockMsg ?? "" },
+            { "added_mech_cells", ToGodotArray(outcome.AddedMechCells ?? EmptyCellList) },
             { "trail", GetTrail() },
             { "max_len", _maxLen },
             { "steps", _steps },
             { "finished", _finished },
         };
         return res;
+    }
+
+    private static readonly List<Cell> EmptyCellList = new();
+
+    /// <summary>纯 C# 单步结果；生成器 / 求解器 / 差分测试用，不分配 Godot 对象。</summary>
+    internal struct StepOutcome
+    {
+        public bool Accepted;
+        public bool Truncated;
+        public bool AteFood;
+        public Cell FoodCell;
+        public bool Grew;
+        public bool Won;
+        public string DeadlockMsg;
+        public List<Cell> AddedMechCells;
+    }
+
+    /// <summary>纯 C# 单步；语义与旧 Step 完全一致（先移动、后生长、再胜负 / 死局）。</summary>
+    internal StepOutcome StepCore(Cell dir)
+    {
+        var outcome = new StepOutcome
+        {
+            FoodCell = Cell.Zero,
+            DeadlockMsg = "",
+            AddedMechCells = null,
+        };
+        if (_finished)
+        {
+            return outcome;
+        }
+
+        Cell next = new Cell(Head.X + dir.X, Head.Y + dir.Y);
+        MoveKind kind = ClassifyMove(next);
+        if (kind == MoveKind.Body)
+        {
+            // 情况 B：踏入自身身体 -> 截断到该格
+            int bodyIdx = _trail.IndexOf(next);
+            _trail.RemoveRange(bodyIdx + 1, _trail.Count - bodyIdx - 1);
+            _steps += 1;
+            outcome.Accepted = true;
+            outcome.Truncated = true;
+        }
+        else if (kind == MoveKind.Walk)
+        {
+            // 情况 A：可走格且身体未达硬上限
+            _trail.Add(next);
+            if (_foods.Remove(next))
+            {
+                _foodEaten += 1;
+                _maxLen += _foodLenGain;
+                outcome.AteFood = true;
+                outcome.FoodCell = next;
+            }
+            _steps += 1;
+            outcome.Accepted = true;
+        }
+
+        if (outcome.Accepted)
+        {
+            if (_steps > 0 && _steps % _growthInterval == 0)
+            {
+                outcome.Grew = true;
+                outcome.AddedMechCells = Grow();
+            }
+            if (Head.Equals(_goal))
+            {
+                outcome.Won = true;
+                _finished = true;
+            }
+            else if (!SuppressDeadlockChecks)
+            {
+                outcome.DeadlockMsg = CheckDeadlock();
+                if (outcome.DeadlockMsg.Length > 0)
+                {
+                    _finished = true;
+                }
+            }
+        }
+        return outcome;
     }
 
     internal enum MoveKind
@@ -396,6 +428,19 @@ public partial class RuleState : RefCounted
     public int GetFoodEaten()
     {
         return _foodEaten;
+    }
+
+    /// <summary>行走中补一片花瓣（相位排花）；直接生效，不需要整条重放。</summary>
+    internal bool AddFood(Cell cell)
+    {
+        if (_initialFoods.Contains(cell))
+        {
+            return false;
+        }
+        _initialFoods.Add(cell);
+        _initialFoodList.Add(cell);
+        _foods.Add(cell);
+        return true;
     }
 
     /// <summary>当前生长次数（封顶 gMax）；供指标 / 枚举器读取。</summary>

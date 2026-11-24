@@ -81,7 +81,8 @@ public sealed class BoundedRouteEnumerator
     private int _count;
     private bool _truncated;
 
-    public Result Enumerate(LevelSpec spec, int maxSteps, int nodeBudget, int maxCount = 2000)
+    public Result Enumerate(LevelSpec spec, int maxSteps, int nodeBudget, int maxCount = 2000,
+        RuleState reusableState = null)
     {
         var result = new Result();
         if (maxSteps < 1)
@@ -89,9 +90,10 @@ public sealed class BoundedRouteEnumerator
             return result;
         }
 
-        _state = new RuleState { SuppressDeadlockChecks = true, SuppressPathCheck = true };
-        _state.Setup(spec);
-        _state.Start();
+        _state = reusableState ?? new RuleState();
+        _state.SuppressDeadlockChecks = true;
+        _state.SuppressPathCheck = true;
+        _state.ResetToSpec(spec);
         _goal = spec.Goal;
         _interval = Math.Max(spec.GrowthInterval, 1);
         _nodeBudget = Math.Max(nodeBudget, 1);

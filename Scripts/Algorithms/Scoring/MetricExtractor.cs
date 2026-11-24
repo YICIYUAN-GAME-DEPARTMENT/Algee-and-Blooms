@@ -119,22 +119,19 @@ public static class MetricExtractor
                 }
             }
 
-            Godot.Collections.Dictionary res = st.Step(new Vector2I(chosenDir.X, chosenDir.Y));
-            if (!res["accepted"].AsBool())
+            RuleState.StepOutcome outcome = st.StepCore(chosenDir);
+            if (!outcome.Accepted)
             {
                 routeValid = false;
                 break;
             }
-            if (res["ate_food"].AsBool())
+            if (outcome.AteFood)
             {
-                eatenFoods.Add(new Cell(chosen.X, chosen.Y));
+                eatenFoods.Add(chosen);
             }
-            if (res["grew"].AsBool())
+            if (outcome.Grew && i >= lateStart)
             {
-                if (i >= lateStart)
-                {
-                    lateGrowth = true;
-                }
+                lateGrowth = true;
             }
         }
         minSlack = Math.Min(minSlack, st.GetRemainingSteps());
@@ -163,7 +160,7 @@ public static class MetricExtractor
         if (options.EnableFalseAffordance)
         {
             (int count, int gap, bool estimated) = ComputeFalseAffordance(
-                spec, steps, eatenFoods, distFromSpawn, distFromGoal, options.SolveNodeBudget);
+                spec, steps, eatenFoods, distFromSpawn, distFromGoal, options.SolveNodeBudget, st);
             vector.M14FalseAffordance = count;
             vector.M15MisleadGap = gap;
             vector.CEstimated |= estimated;
@@ -173,7 +170,7 @@ public static class MetricExtractor
         {
             var enumerator = new Search.BoundedRouteEnumerator();
             Search.BoundedRouteEnumerator.Result funnel = enumerator.Enumerate(
-                spec, steps + 2, options.FunnelNodeBudget, options.FunnelMaxCount);
+                spec, steps + 2, options.FunnelNodeBudget, options.FunnelMaxCount, st);
             vector.M16FunnelWidth = Math.Max(1, funnel.Count);
             vector.CEstimated |= funnel.Truncated;
         }
@@ -185,7 +182,9 @@ public static class MetricExtractor
 
         if (options.EnableNaiveStrategies)
         {
-            vector.M17NaiveFailRate = ComputeNaiveFailRate(spec, steps, distFromSpawn, distFromGoal);
+            st.SuppressDeadlockChecks = false;
+            st.SuppressPathCheck = false;
+            vector.M17NaiveFailRate = ComputeNaiveFailRate(spec, steps, distFromSpawn, distFromGoal, st);
         }
 
         Normalize(vector);
@@ -226,12 +225,13 @@ public static class MetricExtractor
 
     private static (int Count, int Gap, bool Estimated) ComputeFalseAffordance(
         LevelSpec spec, int steps, HashSet<Cell> eatenFoods,
-        Dictionary<Cell, int> distFromSpawn, Dictionary<Cell, int> distFromGoal, int solveBudget)
+        Dictionary<Cell, int> distFromSpawn, Dictionary<Cell, int> distFromGoal, int solveBudget,
+        RuleState state)
     {
         int count = 0;
         int gap = 0;
         bool estimated = false;
-        var solver = new Search.ExactBfsSolver();
+        Search.ExactBfsSolver solver = null;
 
         foreach (Cell food in spec.Foods)
         {
@@ -249,8 +249,8 @@ public static class MetricExtractor
             }
 
             LevelSpec without = CloneSpec(spec, food);
-            var state = new RuleState();
-            state.Setup(without);
+            solver ??= new Search.ExactBfsSolver();
+            state.ResetToSpec(without);
             Godot.Collections.Dictionary result = solver.Solve(state, solveBudget);
             string status = result["status"].AsString();
             if (status == "UNKNOWN")
@@ -264,34 +264,34 @@ public static class MetricExtractor
                 gap = Math.Max(gap, steps - (ds + dg));
             }
         }
+        state.ResetToSpec(spec);
         return (count, gap, estimated);
     }
 
     private static double ComputeNaiveFailRate(LevelSpec spec, int steps,
-        Dictionary<Cell, int> distFromSpawn, Dictionary<Cell, int> distFromGoal)
+        Dictionary<Cell, int> distFromSpawn, Dictionary<Cell, int> distFromGoal, RuleState state)
     {
         int limit = steps + 5;
         int fail = 0;
-        if (!RunGreedy(spec, limit, (st, goal) => ChooseTowardGoal(st, distFromGoal)))
+        if (!RunGreedy(state, spec, limit, (st, goal) => ChooseTowardGoal(st, distFromGoal)))
         {
             fail++;
         }
-        if (!RunGreedy(spec, limit, (st, goal) => ChooseFoodFirst(st, goal, distFromGoal)))
+        if (!RunGreedy(state, spec, limit, (st, goal) => ChooseFoodFirst(st, goal, distFromGoal)))
         {
             fail++;
         }
-        if (!RunGreedy(spec, limit, (st, goal) => ChooseStaticShortest(st, distFromSpawn)))
+        if (!RunGreedy(state, spec, limit, (st, goal) => ChooseStaticShortest(st, distFromSpawn)))
         {
             fail++;
         }
         return fail / 3.0;
     }
 
-    private static bool RunGreedy(LevelSpec spec, int stepLimit, Func<RuleState, Cell, Cell> choose)
+    private static bool RunGreedy(RuleState st, LevelSpec spec, int stepLimit,
+        Func<RuleState, Cell, Cell> choose)
     {
-        var st = new RuleState();
-        st.Setup(spec);
-        st.Start();
+        st.ResetToSpec(spec);
         for (int i = 0; i < stepLimit; i++)
         {
             if (st.Head.Equals(spec.Goal))
@@ -303,16 +303,16 @@ public static class MetricExtractor
             {
                 return false;
             }
-            Godot.Collections.Dictionary res = st.Step(new Vector2I(dir.X, dir.Y));
-            if (!res["accepted"].AsBool())
+            RuleState.StepOutcome outcome = st.StepCore(dir);
+            if (!outcome.Accepted)
             {
                 return false;
             }
-            if (res["won"].AsBool())
+            if (outcome.Won)
             {
                 return true;
             }
-            if (res["deadlock_msg"].AsString().Length > 0)
+            if (outcome.DeadlockMsg.Length > 0)
             {
                 return false;
             }

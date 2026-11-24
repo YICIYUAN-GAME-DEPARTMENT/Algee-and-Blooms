@@ -231,7 +231,8 @@ public partial class RouteFirstGenerator : RefCounted
 
         var requiredFoods = new List<Cell>();
         var walked = new HashSet<Cell> { spawn };
-        if (!RandomWalk(spec, rng, targetSteps, requiredFoods, walked, out List<char> dirs, out Cell head))
+        var trailOrder = new List<Cell>();
+        if (!RandomWalk(spec, rng, targetSteps, requiredFoods, walked, out List<char> dirs, out Cell head, trailOrder))
         {
             return Fail("随机行走失败");
         }
@@ -239,9 +240,8 @@ public partial class RouteFirstGenerator : RefCounted
         spec.Goal = head;
         string route = new(dirs.ToArray());
 
-        // 路线确定后再放机关：优先选择靠近路线、会真正产生时间压力的位置，
-        // 但必须通过路线重放验证；极端地形放不下时允许 0 机关（评分会因此偏低）。
-        int placed = PlaceMechanisms(spec, rng, walked, route, mechCount);
+        // 路线确定后放机关：蓝噪声撒点 + 时间窗验证；极端地形放不下时允许 0 机关。
+        int placed = PlaceMechanisms(spec, rng, walked, trailOrder, mechCount);
         if (placed == 0 && mechCount > 0)
         {
             // 保留关卡可玩性：无机关仍可作为低难度样本，不因放置失败丢弃整张图。
@@ -249,7 +249,7 @@ public partial class RouteFirstGenerator : RefCounted
             spec.MechInitialLevels.Clear();
         }
 
-        AddDecoyFoods(rng, spec, walked, 0, 2);
+        AddDecoyFoods(rng, spec, walked, route.Length, 0, 2);
 
         if (!ReplayVerify(spec, route))
         {
@@ -370,9 +370,9 @@ public partial class RouteFirstGenerator : RefCounted
         return best;
     }
 
-    // ── 机关：路线确定后放置，并逐个重放验证 ─────────────────
+    // ── 机关：蓝噪声撒点 + 时间窗验证（不做逐候选整条重放）────────────
     private static int PlaceMechanisms(LevelSpec spec, DeterministicRng rng, HashSet<Cell> walked,
-        string route, int count)
+        IReadOnlyList<Cell> trailOrder, int count)
     {
         if (count <= 0)
         {
@@ -385,40 +385,50 @@ public partial class RouteFirstGenerator : RefCounted
             {
                 continue;
             }
-            int best = int.MaxValue;
+            bool nearTrail = false;
             foreach (Cell p in walked)
             {
-                best = Math.Min(best, Chebyshev(c, p));
-                if (best == 1)
+                if (Chebyshev(c, p) <= 1)
                 {
+                    nearTrail = true;
                     break;
                 }
             }
-            if (best == 1)
+            if (nearTrail)
             {
                 pool.Add(c);
             }
         }
         rng.Shuffle(pool);
 
+        var state = new RuleState();
         int placed = 0;
-        int tried = 0;
         foreach (Cell c in pool)
         {
-            if (tried >= 16)
+            if (placed >= count)
             {
                 break;
             }
-            tried++;
+            bool tooClose = false;
+            foreach (Cell chosen in spec.MechCenters)
+            {
+                if (Chebyshev(chosen, c) < 3)
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose)
+            {
+                continue;
+            }
+
             spec.MechCenters.Add(c);
             spec.MechInitialLevels.Add(0);
-            if (ReplayVerify(spec, route))
+            state.ResetToSpec(spec);
+            if (ValidateMechanismWindows(spec, state, trailOrder))
             {
                 placed++;
-                if (placed >= count)
-                {
-                    return placed;
-                }
             }
             else
             {
@@ -429,11 +439,37 @@ public partial class RouteFirstGenerator : RefCounted
         return placed;
     }
 
-    // ── 随机规则行走（真实 RuleState，关闭死局判定）────────────
+    /// <summary>
+    /// 时间窗验证：机关覆盖路线格的时刻必须晚于（或等于）玩家经过该格的步序。
+    /// 覆盖时刻 = coverStep × 生长周期；玩家第 t 步进入 trailOrder[t]。
+    /// </summary>
+    private static bool ValidateMechanismWindows(LevelSpec spec, RuleState state,
+        IReadOnlyList<Cell> trailOrder)
+    {
+        int interval = Math.Max(spec.GrowthInterval, 1);
+        for (int step = 1; step < trailOrder.Count; step++)
+        {
+            Cell c = trailOrder[step];
+            if (!state.CoverSteps.TryGetValue(c, out int coverStep))
+            {
+                continue;
+            }
+            if (coverStep * interval < step)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ── 随机规则行走：相位排花，不做"濒死回填 + 整条重放" ─────────────
     private static bool RandomWalk(LevelSpec spec, DeterministicRng rng, int targetSteps,
-        List<Cell> requiredFoods, HashSet<Cell> walked, out List<char> dirs, out Cell head)
+        List<Cell> requiredFoods, HashSet<Cell> walked, out List<char> dirs, out Cell head,
+        List<Cell> trailOrder)
     {
         dirs = new List<char>(targetSteps);
+        trailOrder.Clear();
+        trailOrder.Add(spec.Spawn);
         head = spec.Spawn;
 
         var st = new RuleState { SuppressDeadlockChecks = true };
@@ -445,62 +481,43 @@ public partial class RouteFirstGenerator : RefCounted
 
         for (int step = 0; step < targetSteps; step++)
         {
-            var walkOptions = new List<int>(4);
-            var bodyOptions = new List<int>(4);
-            for (int i = 0; i < Directions.Length; i++)
-            {
-                Cell next = new(st.Head.X + Directions[i].X, st.Head.Y + Directions[i].Y);
-                RuleState.MoveKind kind = st.ClassifyMove(next);
-                if (kind == RuleState.MoveKind.Walk)
-                {
-                    walkOptions.Add(i);
-                }
-                else if (kind == RuleState.MoveKind.Body)
-                {
-                    bodyOptions.Add(i);
-                }
-            }
-
-            int pick = -1;
-            if (walkOptions.Count > 0)
-            {
-                // 15% 概率故意截断，制造回头路线与更高难度。
-                if (bodyOptions.Count > 0 && rng.NextInt(100) < 15)
-                {
-                    pick = bodyOptions[rng.NextInt(bodyOptions.Count)];
-                }
-                else
-                {
-                    pick = walkOptions[rng.NextInt(walkOptions.Count)];
-                }
-            }
-            else if (bodyOptions.Count > 0)
-            {
-                pick = bodyOptions[rng.NextInt(bodyOptions.Count)];
-            }
-
+            int pick = ChooseDirection(st, rng);
             if (pick < 0)
             {
-                // 没有合法方向：地形/机关堵死，换下一张候选图。
+                // 没有合法方向：地形堵死，换下一张候选图。
                 return false;
             }
 
-            st.Step(Directions[pick]);
+            Cell next = new(st.Head.X + Directions[pick].X, st.Head.Y + Directions[pick].Y);
+            RuleState.MoveKind kind = st.ClassifyMove(next);
+            if (kind == RuleState.MoveKind.Walk
+                && st.GetRemainingSteps() <= 1
+                && inserted < foodBudget
+                && !spec.Foods.Contains(next)
+                && !next.Equals(spec.Goal)
+                && !next.Equals(spec.Spawn))
+            {
+                // 相位排花：把花瓣放在下一步，走进去立即吃；直接生效，不重放。
+                spec.Foods.Add(next);
+                requiredFoods.Add(next);
+                st.AddFood(next);
+                inserted++;
+            }
+
+            RuleState.StepOutcome outcome = st.StepCore(
+                new Cell(Directions[pick].X, Directions[pick].Y));
+            if (!outcome.Accepted)
+            {
+                return false;
+            }
             dirs.Add(DirChars[pick]);
             walked.Add(st.Head);
+            trailOrder.Add(st.Head);
 
-            // 身长达上限时立刻补花瓣：否则真实死局检查会在"E 尚不可达"时提前判负。
-            while (st.GetRemainingSteps() <= 0)
+            if (st.GetRemainingSteps() <= 0 && kind != RuleState.MoveKind.Body)
             {
-                if (inserted >= foodBudget || !TryInsertFood(spec, st, requiredFoods, rng))
-                {
-                    return false;
-                }
-                inserted++;
-                if (!RebuildAndReplay(spec, dirs, out st))
-                {
-                    return false;
-                }
+                // 食物预算不足，继续必饥饿。
+                return false;
             }
         }
 
@@ -508,58 +525,76 @@ public partial class RouteFirstGenerator : RefCounted
         return true;
     }
 
-    /// <summary>在最近走过的格子里补一片花瓣，再整条路线重放恢复状态。</summary>
-    private static bool TryInsertFood(LevelSpec spec, RuleState st, List<Cell> requiredFoods, DeterministicRng rng)
+    /// <summary>方向选择：Walk 优先，15% 概率故意截断制造回头路线；无路可走返回 -1。</summary>
+    private static int ChooseDirection(RuleState st, DeterministicRng rng)
     {
-        IReadOnlyList<Cell> trail = st.Trail;
-        if (trail.Count <= 1)
+        Span<int> walkOptions = stackalloc int[4];
+        Span<int> bodyOptions = stackalloc int[4];
+        int walkCount = 0;
+        int bodyCount = 0;
+        for (int i = 0; i < Directions.Length; i++)
         {
-            return false;
-        }
-        var existing = new HashSet<Cell>(spec.Foods);
-        int start = Math.Max(1, trail.Count - 1 - rng.NextInt(Math.Min(4, trail.Count - 1)));
-        for (int i = start; i >= 1; i--)
-        {
-            Cell c = trail[i];
-            if (existing.Contains(c) || c.Equals(spec.Spawn))
+            Cell next = new(st.Head.X + Directions[i].X, st.Head.Y + Directions[i].Y);
+            RuleState.MoveKind kind = st.ClassifyMove(next);
+            if (kind == RuleState.MoveKind.Walk)
             {
-                continue;
+                walkOptions[walkCount++] = i;
             }
-            spec.Foods.Add(c);
-            requiredFoods.Add(c);
-            return true;
-        }
-        return false;
-    }
-
-    private static bool RebuildAndReplay(LevelSpec spec, List<char> dirs, out RuleState state)
-    {
-        state = new RuleState { SuppressDeadlockChecks = true };
-        state.Setup(spec);
-        state.Start();
-        foreach (char ch in dirs)
-        {
-            Godot.Collections.Dictionary res = state.Step(DirForChar(ch));
-            if (!res["accepted"].AsBool())
+            else if (kind == RuleState.MoveKind.Body)
             {
-                return false;
+                bodyOptions[bodyCount++] = i;
             }
         }
-        return true;
+        if (walkCount > 0)
+        {
+            if (bodyCount > 0 && rng.NextInt(100) < 15)
+            {
+                return bodyOptions[rng.NextInt(bodyCount)];
+            }
+            return walkOptions[rng.NextInt(walkCount)];
+        }
+        return bodyCount > 0 ? bodyOptions[rng.NextInt(bodyCount)] : -1;
     }
 
-    private static void AddDecoyFoods(DeterministicRng rng, LevelSpec spec, HashSet<Cell> walked, int min, int max)
+    /// <summary>
+    /// 诱饵：只在「看起来更短」的假捷径候选里放（dist(S,d)+dist(d,E) ≤ S-2），
+    /// 且不与规范路线重叠（不会被吃到）。精确真假由评分期的 M14 复核。
+    /// </summary>
+    private static void AddDecoyFoods(DeterministicRng rng, LevelSpec spec, HashSet<Cell> walked,
+        int steps, int min, int max)
     {
         int count = min + rng.NextInt(max - min + 1);
         if (count <= 0)
         {
             return;
         }
+        var grid = new GridModel(spec.Origin, spec.Width, spec.Height);
+        foreach (Cell c in spec.Floor)
+        {
+            grid.Floor.Add(c);
+        }
+        foreach (Cell c in spec.Obstacles)
+        {
+            grid.Obstacles.Add(c);
+        }
+        var empty = new HashSet<Cell>();
+        Dictionary<Cell, int> distS = grid.BfsDistMap(spec.Spawn, empty);
+        Dictionary<Cell, int> distG = grid.BfsDistMap(spec.Goal, empty);
+
         var existing = new HashSet<Cell>(spec.Foods) { spec.Goal, spec.Spawn };
         var pool = new List<Cell>();
         foreach (Cell c in spec.Floor)
         {
-            if (!walked.Contains(c) && !existing.Contains(c))
+            if (walked.Contains(c) || existing.Contains(c))
+            {
+                continue;
+            }
+            if (!distS.TryGetValue(c, out int ds) || !distG.TryGetValue(c, out int dg))
+            {
+                continue;
+            }
+            // 假捷径候选：看起来能省 2 步以上，但不在规范路线上。
+            if (ds + dg <= steps - 2)
             {
                 pool.Add(c);
             }
@@ -580,12 +615,12 @@ public partial class RouteFirstGenerator : RefCounted
         st.Start();
         foreach (char ch in route)
         {
-            Godot.Collections.Dictionary res = st.Step(DirForChar(ch));
-            if (!res["accepted"].AsBool())
+            RuleState.StepOutcome outcome = st.StepCore(DirCellForChar(ch));
+            if (!outcome.Accepted)
             {
                 return false;
             }
-            if (!res["won"].AsBool() && res["deadlock_msg"].AsString().Length > 0)
+            if (!outcome.Won && outcome.DeadlockMsg.Length > 0)
             {
                 return false;
             }
@@ -621,15 +656,15 @@ public partial class RouteFirstGenerator : RefCounted
         return Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
     }
 
-    private static Vector2I DirForChar(char ch)
+    private static Cell DirCellForChar(char ch)
     {
         return ch switch
         {
-            'A' => new Vector2I(-1, 0),
-            'D' => new Vector2I(1, 0),
-            'W' => new Vector2I(0, -1),
-            'S' => new Vector2I(0, 1),
-            _ => Vector2I.Zero,
+            'A' => new Cell(-1, 0),
+            'D' => new Cell(1, 0),
+            'W' => new Cell(0, -1),
+            'S' => new Cell(0, 1),
+            _ => Cell.Zero,
         };
     }
 
