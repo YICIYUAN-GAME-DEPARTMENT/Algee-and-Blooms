@@ -11,10 +11,10 @@ public static class SizeLadder
         int[] sizes = tier switch
         {
             "easy" => new[] { 10, 12 },
-            "normal" => new[] { 12, 14 },
+            "normal" => new[] { 14, 16 },
             "hard" => new[] { 14, 16, 18 },
             "expert" => new[] { 18, 20 },
-            _ => new[] { 12, 14 },
+            _ => new[] { 14, 16 },
         };
         int size = sizes[rng.NextInt(sizes.Length)];
         return (size, size);

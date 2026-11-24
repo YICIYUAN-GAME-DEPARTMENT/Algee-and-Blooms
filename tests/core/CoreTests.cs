@@ -38,6 +38,10 @@ public partial class CoreTests : Node
         TestLevelSpecV2();
         TestMetrics();
         TestTagger();
+        TestMapElites();
+        TestGenerationJob();
+        TestPhysarumGenerator();
+        TestGenerationCache();
         TestGenerator();
         await TestGoldenLevels();
         TestScoreAnchors();
@@ -212,7 +216,7 @@ public partial class CoreTests : Node
             FoodLenGain = 3,
             GrowthInterval = 6,
             MechanismCap = 2,
-            TargetScore = 76,
+            TargetSteps = 16,
             BudgetUnits = 12,
             ParamSignature = "5|3|6|2|0,1",
             Tags = { "tight_budget", "gate_sequence" },
@@ -228,7 +232,7 @@ public partial class CoreTests : Node
         Check(back.SchemaVersion == 2, "Schema: v2 往返版本");
         Check(back.Tier == "hard", "Schema: tier 往返");
         Check(back.ParamSignature == "5|3|6|2|0,1", "Schema: 参数签名往返");
-        Check(back.TargetScore == 76 && back.BudgetUnits == 12, "Schema: 目标分 / 预算往返");
+        Check(back.TargetSteps == 16 && back.BudgetUnits == 12, "Schema: 目标步数 / 预算往返");
         Check(back.Tags.Count == 2 && back.TagEvidence.Count == 1, "Schema: 标签与证据往返");
 
         string v1Json = FileAccess.GetFileAsString("res://tests/fixtures/anchors/level_01.json");
@@ -281,7 +285,7 @@ public partial class CoreTests : Node
         Check(Math.Abs(v.M10Openness - 1.0) < 1e-9, "指标: M10 openness=1");
         Check(v.M12GateLayers == 0, "指标: M12 无机关=0");
         Check(!v.M13LateGrowth, "指标: M13 无生长");
-        Check(v.M16FunnelWidth == 1, "指标: M16 关闭时=1");
+        Check(v.M16FunnelWidth == 0 && !v.FunnelMeasured, "指标: M16 关闭时不参与评分");
         Check(v.M19Size == 10, "指标: M19 size=10");
         Check(v.M18ChoiceEntropy > 7.0, "指标: M18 熵>7");
 
@@ -341,6 +345,159 @@ public partial class CoreTests : Node
         }
     }
 
+    /// <summary>MAP-Elites 存档（S5）：步骤目标、同格去重、选格、target_miss 回退。</summary>
+    private void TestMapElites()
+    {
+        var archive = new MapElitesArchive(10);
+        archive.Add(MakeArchiveResult(70, 12, 10, 1.0, 0.1, 50));
+        archive.Add(MakeArchiveResult(75, 12, 10, 1.0, 0.1, 40));
+        Check(archive.Count == 1, "存档: 相同描述符去重为 1 格");
+
+        GenerationResult hit = archive.Select(out int delta, out bool miss);
+        Check(hit != null && hit.Solution.Steps == 10 && hit.Score.Quality == 50,
+            "存档: 同格保留质量更高的候选");
+        Check(!miss && delta == 0, $"存档: 命中目标步数（delta={delta} miss={miss}）");
+
+        archive.Add(MakeArchiveResult(60, 18, 4, 2.0, 0.5, 90));
+        Check(archive.Count == 2, "存档: 不同描述符占用新格");
+        GenerationResult best = archive.Select(out int delta2, out bool miss2);
+        Check(best != null && best.Solution.Steps == 10 && delta2 == 0 && !miss2,
+            "存档: 选格取离目标步数最近的格子");
+
+        var farArchive = new MapElitesArchive(30);
+        farArchive.Add(MakeArchiveResult(70, 12, 8, 1.0, 0.1, 50));
+        farArchive.Add(MakeArchiveResult(80, 18, 10, 2.0, 0.5, 90));
+        GenerationResult fallback = farArchive.Select(out int delta3, out bool miss3);
+        Check(fallback != null && fallback.Solution.Steps == 10 && delta3 == 20 && miss3,
+            "存档: 目标步数不可达时回退最近格并记 target_miss");
+
+        var empty = new MapElitesArchive(10);
+        Check(empty.Select(out _, out _) == null && empty.Count == 0, "存档: 空存档返回 null");
+    }
+
+    private static GenerationResult MakeArchiveResult(int score, int width, int steps,
+        double minSlack, double mechPressure, int quality)
+    {
+        var spec = new LevelSpec { Width = width, Height = width };
+        return new GenerationResult
+        {
+            Success = true,
+            Spec = spec,
+            Solution = new LevelSolution { Status = "SOLVABLE", Steps = steps, Route = "" },
+            Score = new LevelScore { Difficulty = score, Quality = quality },
+            Metrics = new Dictionary<string, double>
+            {
+                ["min_slack"] = minSlack,
+                ["mech_pressure"] = mechPressure,
+            },
+        };
+    }
+
+    /// <summary>分帧任务（S6）：与同步生成逐字一致、按单元熔断仍返回可重放终态。</summary>
+    private void TestGenerationJob()
+    {
+        foreach ((long seed, string tier) in new[] { (7L, "normal"), (42L, "expert") })
+        {
+            var cfg = new GeneratorConfig { Seed = seed, Difficulty = tier, Candidates = 2 };
+            GenerationResult direct = RouteFirstGenerator.GenerateCore(cfg);
+            GenerationResult sync = new GenerationJob(cfg, GenerationBudget.Unlimited()).RunToCompletion();
+            Check(direct.Success && sync.Success, $"任务: {seed}/{tier} 同步生成成功");
+            Check(sync.Spec.ToJson() == direct.Spec.ToJson()
+                && sync.Solution.Route == direct.Solution.Route,
+                $"任务: {seed}/{tier} 与 GenerateCore 逐字一致");
+
+            var slicedCfg = new GeneratorConfig { Seed = seed, Difficulty = tier, Candidates = 2 };
+            var sliced = new GenerationJob(slicedCfg, GenerationBudget.Unlimited());
+            int guard = 0;
+            while (!sliced.Done && guard++ < 10000)
+            {
+                sliced.Advance(1.0);
+            }
+            Check(sliced.Done, $"任务: {seed}/{tier} 1ms 分帧可完成");
+            Check(sliced.Result != null && sliced.Result.Spec.ToJson() == sync.Spec.ToJson()
+                && sliced.Result.Solution.Route == sync.Solution.Route,
+                $"任务: {seed}/{tier} 1ms 分帧结果一致");
+        }
+
+        var budget = new GenerationBudget { MaxUnits = 2, MaxCandidates = 1 };
+        var capped = new GenerationJob(
+            new GeneratorConfig { Seed = 1, Difficulty = "easy", TargetSteps = 1 }, budget);
+        GenerationResult cappedResult = capped.RunToCompletion();
+        Check(capped.Done && capped.BudgetAborted, "任务: 工作单元上限触发熔断");
+        Check(cappedResult != null && (cappedResult.Success || !string.IsNullOrEmpty(cappedResult.Reason)),
+            "任务: 熔断仍返回终态结果");
+        if (cappedResult != null && cappedResult.Success)
+        {
+            Check(ReplaySpec(LevelSpec.FromJson(cappedResult.Spec.ToJson()), cappedResult.Solution.Route),
+                "任务: 熔断返回的关卡可重放");
+        }
+    }
+
+    /// <summary>黏菌枝干生成（v5）：normal/expert 可出关、路线可重放、枝干指标随结果返回。</summary>
+    private void TestPhysarumGenerator()
+    {
+        foreach ((long seed, string tier) in new[] { (1L, "normal"), (3L, "expert") })
+        {
+            var cfg = new GeneratorConfig
+            {
+                Seed = seed,
+                Difficulty = tier,
+                GeneratorModel = GeneratorModel.Physarum,
+                ObstacleModel = ObstacleModel.PoissonCluster,
+            };
+            var job = new GenerationJob(cfg, GenerationBudget.For(GenerationBudgetTier.Loading));
+            GenerationResult result = job.RunToCompletion();
+            Check(result != null && result.Success, $"黏菌: {seed}/{tier} 生成成功");
+            if (result == null || !result.Success)
+            {
+                continue;
+            }
+            Check(ReplaySpec(LevelSpec.FromJson(result.Spec.ToJson()), result.Solution.Route),
+                $"黏菌: {seed}/{tier} 路线可重放通关");
+            Check(result.Metrics.TryGetValue("branch_top", out double top) && top > 0,
+                $"黏菌: {seed}/{tier} 返回枝干粗壮度");
+            Check(result.Metrics.TryGetValue("branch_ratio", out double ratio) && ratio >= 0 && ratio <= 1,
+                $"黏菌: {seed}/{tier} 次/主枝干比值在 [0,1]");
+        }
+    }
+
+    /// <summary>生成缓存与服务（S6）：LRU、命中逐字一致、缓存路线可重放。</summary>
+    private void TestGenerationCache()
+    {
+        string dir = ProjectSettings.GlobalizePath("user://test_generation_cache");
+        var cache = new GenerationCache(dir, 2);
+        cache.Clear();
+        cache.Put(1, "easy", 1, "{\"a\":1}");
+        Check(cache.TryGet(1, "easy", 1, out string json) && json.Contains("\"a\""), "缓存: 写入后可读");
+        cache.Put(2, "easy", 1, "{}");
+        cache.Put(3, "easy", 1, "{}");
+        Check(cache.Count == 2, $"缓存: LRU 容量 2（实际 {cache.Count}）");
+
+        var service = new GenerationService();
+        service.SetupCache(dir, 10);
+        string generated = service.GenerateNow(11, "easy", "bootstrap");
+        Check(!string.IsNullOrEmpty(generated), "服务: 同步生成返回 JSON");
+
+        var service2 = new GenerationService();
+        service2.SetupCache(dir, 10);
+        bool hit = service2.Begin(11, "easy", "bootstrap");
+        Check(hit && service2.FromCache(), "服务: 相同 seed/tier 缓存命中");
+        Check(service2.ResultJson() == generated, "服务: 缓存内容逐字一致");
+
+        using JsonDocument doc = JsonDocument.Parse(generated);
+        JsonElement root = doc.RootElement;
+        Check(root.GetProperty("success").GetBoolean(), "服务: 生成结果 success=true");
+        string specJson = root.GetProperty("spec_json").GetString() ?? "";
+        string route = root.GetProperty("route").GetString() ?? "";
+        Check(!string.IsNullOrEmpty(specJson) && !string.IsNullOrEmpty(route), "服务: spec / route 非空");
+        if (!string.IsNullOrEmpty(specJson) && !string.IsNullOrEmpty(route))
+        {
+            Check(ReplaySpec(LevelSpec.FromJson(specJson), route), "服务: 生成路线可重放通关");
+        }
+        Check(root.GetProperty("work_units").GetDouble() > 0, "服务: 工作单元已计量");
+        cache.Clear();
+    }
+
     private void TestGenerator()
     {
         var bands = new[] { "easy", "normal", "hard" };
@@ -350,6 +507,9 @@ public partial class CoreTests : Node
         int replayFailed = 0;
         int differentialFailed = 0;
         int specFieldFailed = 0;
+        int targetFieldFailed = 0;
+        int targetDeltaSum = 0;
+        int targetSamples = 0;
         var signatures = new HashSet<string>();
         var sizes = new HashSet<int>();
 
@@ -403,6 +563,13 @@ public partial class CoreTests : Node
                 {
                     specFieldFailed++;
                 }
+                if (result.Spec.TargetSteps != result.TargetSteps
+                    || result.TargetSteps <= 0)
+                {
+                    targetFieldFailed++;
+                }
+                targetDeltaSum += result.TargetDelta;
+                targetSamples++;
                 scores.Add(result.Score.Difficulty);
             }
             scoresByBand[band] = scores;
@@ -412,6 +579,9 @@ public partial class CoreTests : Node
         Check(replayFailed == 0, $"生成: 全部路线可重放通关（失败 {replayFailed}）");
         Check(differentialFailed == 0, $"生成: Step 与 StepCore 逐步一致（失败 {differentialFailed}）");
         Check(specFieldFailed == 0, $"生成: v2 字段完整（失败 {specFieldFailed}）");
+        Check(targetFieldFailed == 0, $"生成: 目标步数 / 分级字段完整（失败 {targetFieldFailed}）");
+        double targetMeanDelta = targetDeltaSum / (double)Math.Max(1, targetSamples);
+        Check(targetMeanDelta <= 6.0, $"生成: 平均目标步数偏差 {targetMeanDelta:F1} <= 6");
         Check(signatures.Count >= 20, $"生成: 参数签名多样化（{signatures.Count} 种）");
         Check(sizes.Count >= 3, $"生成: 尺寸多样化（{sizes.Count} 种）");
         GD.Print($"生成参数: 签名 {signatures.Count} 种，尺寸 {string.Join(",", sizes)}");
@@ -469,7 +639,7 @@ public partial class CoreTests : Node
             avg /= timings.Count;
             double p95 = timings[Math.Min(timings.Count - 1, (int)(timings.Count * 0.95))];
             GD.Print($"生成性能: avg={avg:F2} ms p95={p95:F2} ms max={timings[^1]:F2} ms");
-            Check(p95 < 150.0, $"生成性能: p95 {p95:F2} ms < 150 ms（混合尺寸）");
+            Check(p95 < 500.0, $"生成性能: p95 {p95:F2} ms < 500 ms（含枝干评分；Loading 预算 10s）");
         }
     }
 
@@ -626,7 +796,7 @@ public partial class CoreTests : Node
         };
     }
 
-    /// <summary>锚点回归：快照与内置一致、5 关 D_raw 可复现、分数命中 5 / 10 / 25 / 45 / 100。</summary>
+    /// <summary>锚点回归：原始值刻度下 5 关分数与难度档可复现。</summary>
     private void TestScoreAnchors()
     {
         string expectedJson = FileAccess.GetFileAsString("res://tests/fixtures/levels_expected.json");
@@ -647,7 +817,8 @@ public partial class CoreTests : Node
             return;
         }
         ScoreAnchors snapshot = ScoreAnchors.FromJson(anchorsJson);
-        Check(snapshot.ScoringVersion == 2, "锚点: scoring_version=2");
+        Check(snapshot.ScoringVersion == 5, "锚点: scoring_version=5");
+        Check(snapshot.Anchors.Count == 6, "锚点: 6 条实测锚点");
         Check(snapshot.Anchors.Count == ScoreAnchors.Default.Anchors.Count, "锚点: 快照与内置数量一致");
         for (int i = 0; i < Math.Min(snapshot.Anchors.Count, ScoreAnchors.Default.Anchors.Count); i++)
         {
@@ -657,14 +828,25 @@ public partial class CoreTests : Node
                 $"锚点: {a.Id} 快照与内置一致");
         }
 
-        var targets = new Dictionary<int, int> { [1] = 5, [2] = 10, [3] = 25, [4] = 45, [5] = 100 };
-        var tolerances = new Dictionary<int, int> { [1] = 2, [2] = 2, [3] = 3, [4] = 3, [5] = 2 };
+        Check(BranchScoreSchemes.TierForScore(26) == "Easy", "档位: L2=26 为 Easy");
+        Check(BranchScoreSchemes.TierForScore(45) == "Normal", "档位: L3=45 为 Normal");
+        Check(BranchScoreSchemes.TierForScore(58) == "Hard", "档位: L5=58 为 Hard");
+        Check(BranchScoreSchemes.TierForScore(60) == "Expert", "档位: 60 为 Expert");
+
+        var targets = new Dictionary<int, int> { [1] = 18, [2] = 26, [3] = 45, [4] = 47, [5] = 58 };
+        var tiers = new Dictionary<int, string>
+        {
+            [1] = "Easy", [2] = "Easy", [3] = "Normal", [4] = "Normal", [5] = "Hard",
+        };
         var options = new MetricOptions
         {
-            FunnelNodeBudget = 200_000,
-            SolveNodeBudget = 800_000,
+            FunnelNodeBudget = 2_000_000,
+            FunnelMaxCount = 200_000,
+            SolveNodeBudget = 2_000_000,
+            SolveStatesNodeBudget = 2_000_000,
+            RequiredFoodNodeBudget = 2_000_000,
+            EnableRequiredFood = true,
         };
-        ScoreSpline spline = ScoreSpline.Default;
 
         for (int id = 1; id <= 5; id++)
         {
@@ -686,17 +868,21 @@ public partial class CoreTests : Node
                 }
             }
             Check(anchor != null, $"锚点: L{id} 快照条目存在");
+            double raw = 0;
             if (anchor != null)
             {
-                Check(Math.Abs(v.DRaw - anchor.DRaw) < 0.01,
-                    $"锚点: L{id} D_raw 与快照一致 ({v.DRaw:F3})");
+                BranchPosteriorFeatures branch = BranchPosteriorScorer.Extract(spec, routes[id]);
+                raw = BranchScoreSchemes.Hybrid(branch, v);
+                Check(Math.Abs(raw - anchor.DRaw) < 0.05,
+                    $"锚点: L{id} 方案 C 原始值 {raw:F3} 与快照一致");
             }
 
-            int score = spline.InterpolateRounded(v.DRaw);
-            Check(Math.Abs(score - targets[id]) <= tolerances[id],
-                $"锚点: L{id} 分数 {score} 命中 {targets[id]}±{tolerances[id]}");
-            GD.Print($"[Anchor] L{id} D={v.DRaw:F3} score={score} " +
-                $"M14={v.M14FalseAffordance} M16={v.M16FunnelWidth} CEst={(v.CEstimated ? 1 : 0)}");
+            int score = BranchScoreSchemes.ScoreForRaw(raw);
+            string tier = BranchScoreSchemes.TierForScore(score);
+            Check(score == targets[id], $"锚点: L{id} 原始分 {score} == {targets[id]}");
+            Check(tier == tiers[id], $"锚点: L{id} 难度档 {tier} == {tiers[id]}");
+            GD.Print($"[Anchor] L{id} rawC={raw:F3} score={score}({tier}) " +
+                $"dCore={v.DCore:F1} M14={v.M14FalseAffordance} CEst={(v.CEstimated ? 1 : 0)}");
         }
     }
 

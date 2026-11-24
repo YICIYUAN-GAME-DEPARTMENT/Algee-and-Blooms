@@ -134,6 +134,14 @@ const HEAD_FRAME_HOLD_SEC := 0.18
 ## 剧情覆盖层场景（运行时按需实例，场景树见 Scenes/Dialogue/DialogueOverlay.tscn）
 const DIALOGUE_SCENE_PATH := "res://Scenes/Dialogue/DialogueOverlay.tscn"
 
+const PLAYER_SPAWN_SCENE := preload("res://Scenes/Entities/PlayerSpawn.tscn")
+const GOAL_SCENE := preload("res://Scenes/Entities/Goal.tscn")
+const FOOD_SCENE := preload("res://Scenes/Entities/Food.tscn")
+const MECH_SCENE := preload("res://Scenes/Entities/Mechanism.tscn")
+
+## 随机关卡（S7）：GameManager 注入 LevelSpec 后，运行时重建地板/实体；手编关卡恒为 false。
+var generated_active := false
+
 @onready var _ground: TileMapLayer = $World/Ground
 @onready var _obstacles: TileMapLayer = $World/Obstacles
 @onready var _mech_cells: TileMapLayer = $World/MechanismCells
@@ -147,6 +155,9 @@ const DIALOGUE_SCENE_PATH := "res://Scenes/Dialogue/DialogueOverlay.tscn"
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
+	generated_active = GameManager.generated_mode and not GameManager.generated_spec_json.is_empty()
+	if generated_active:
+		_build_generated_board()
 	_collect_entities()
 	_compute_board_rect()
 	grid.setup(_board_origin, _board_size)
@@ -161,9 +172,24 @@ func _ready() -> void:
 	# LevelHUD 同理：作者可能整层隐藏便于编辑；运行时必须显示，否则顶栏/
 	# 结算面板/暂停菜单全部不可见（剧情播完后"弹不出胜利/失败界面"的根因之一）。
 	_hud.visible = true
-	_hud.set_level_title("第 %d 关 · %s" % [level_id, level_name])
+	if generated_active:
+		_hud.set_difficulty(GameManager.generated_score, GameManager.generated_steps,
+				GameManager.generated_model_label(), GameManager.generated_generator_label(),
+				GameManager.generated_score_tier_label())
+		_hud.set_generated_seed(GameManager.generated_seed)
+		_hud.set_tags(GameManager.generated_tags)
+		_fit_camera_to_generated_board()
+	else:
+		_hud.set_level_title("第 %d 关 · %s" % [level_id, level_name])
+		_hud.set_tags([])
 	_set_head_anchor()
 	_sync_player_layer()
+	if generated_active:
+		var cam := get_node_or_null("Cam") as Camera2D
+		var zoom_value := cam.zoom.x if cam != null else 1.0
+		print("[GeneratedLevel] board=%s origin=%s floor=%d foods=%d mechs=%d L0=%d trail=%d goal=%s zoom=%.2f" % [
+			_board_size, _board_origin, grid.floor_cells.size(), _foods.size(), _mechanisms.size(),
+			state.max_len, state.trail.size(), state.goal_cell, zoom_value])
 	EventManager.level_loaded.emit(level_id)
 	# 开场剧情：先播完再解锁操作（await 期间场景可能被 R 重开，需判存活）
 	if not story_start.is_empty():
@@ -196,6 +222,100 @@ func _scan(node: Node) -> void:
 			_mechanisms.append(child as Mechanism)
 		else:
 			_scan(child)
+
+
+## 随机关卡（S7）：按 LevelSpec 重建图层与实体；场景里预置的模板内容全部清掉。
+func _build_generated_board() -> void:
+	var parsed: Variant = JSON.parse_string(GameManager.generated_spec_json)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("Level: 随机关卡 spec 解析失败，退回模板布局")
+		generated_active = false
+		return
+	var spec: Dictionary = parsed
+	level_id = 0
+	level_name = "随机关卡"
+	map_size = Vector2i(int(spec.get("width", 12)), int(spec.get("height", 12)))
+
+	_ground.clear()
+	_obstacles.clear()
+	_mech_cells.clear()
+	_player_cells.clear()
+	var entity_root: Node2D = $World/EntityRoot
+	for child in entity_root.get_children():
+		entity_root.remove_child(child)
+		child.queue_free()
+
+	var floor_cells: Array = []
+	for raw in spec.get("floor", []):
+		floor_cells.append(_cell_from_array(raw))
+	if not floor_cells.is_empty():
+		_paint_auto(_ground, floor_cells)
+	var obstacle_cells: Array = []
+	for raw in spec.get("obstacles", []):
+		obstacle_cells.append(_cell_from_array(raw))
+	if not obstacle_cells.is_empty():
+		_paint_auto(_obstacles, obstacle_cells)
+
+	_instance_generated_entity(PLAYER_SPAWN_SCENE, _cell_from_array(spec.get("spawn", [0, 0])), entity_root)
+	_instance_generated_entity(GOAL_SCENE, _cell_from_array(spec.get("goal", [0, 0])), entity_root)
+	for raw in spec.get("foods", []):
+		_instance_generated_entity(FOOD_SCENE, _cell_from_array(raw), entity_root)
+	var mech_levels: Array = spec.get("mech_initial_levels", [])
+	var mech_index := 0
+	for raw in spec.get("mech_centers", []):
+		var mech: Node2D = _instance_generated_entity(MECH_SCENE, _cell_from_array(raw), entity_root)
+		var level := int(mech_levels[mech_index]) if mech_index < mech_levels.size() else 0
+		mech.set("initial_level", level)
+		mech_index += 1
+
+	initial_max_len_override = int(spec.get("initial_max_len", 0))
+	food_len_gain_override = int(spec.get("food_len_gain", 0))
+	mechanism_max_level_override = int(spec.get("mechanism_cap", 0))
+	growth_step_interval_override = int(spec.get("growth_interval", 0))
+	story_start = ""
+	story_win = ""
+	story_fail = ""
+
+
+func _instance_generated_entity(scene: PackedScene, cell: Vector2i, parent: Node) -> Node2D:
+	var node: Node2D = scene.instantiate()
+	node.set("cell", cell)  # add_child 之前设置，_ready 会按格中心摆放
+	parent.add_child(node)
+	return node
+
+
+static func _cell_from_array(raw: Variant) -> Vector2i:
+	if typeof(raw) == TYPE_ARRAY and raw.size() >= 2:
+		return Vector2i(int(raw[0]), int(raw[1]))
+	return Vector2i.ZERO
+
+
+## 随机关卡相机：按棋盘包围盒居中缩放（仅生成模式；手编关卡仍由作者摆放）。
+func _fit_camera_to_generated_board() -> void:
+	var cam := get_node_or_null("Cam") as Camera2D
+	if cam == null:
+		return
+	var board_px := Vector2(_board_size) * GridMetrics.CELL_PX
+	if board_px.x <= 0.0 or board_px.y <= 0.0:
+		return
+	var view := Vector2(1280, 720)
+	var vp := get_viewport()
+	if vp != null:
+		view = vp.get_visible_rect().size
+	var margin := 1.25
+	var fit := minf(1.0, minf(view.x / (board_px.x * margin), view.y / (board_px.y * margin)))
+	cam.zoom = Vector2(fit, fit)
+	cam.position = Vector2(_board_origin) * GridMetrics.CELL_PX + board_px * 0.5
+	cam.make_current()
+
+	# 背景跟随相机：按可见世界范围放大并居中，避免棋盘外围露出未覆盖区域。
+	var bg := get_node_or_null("World/Bg") as Sprite2D
+	if bg != null and bg.texture != null:
+		var visible_world := view / maxf(fit, 0.01)
+		var cover := Vector2(maxf(visible_world.x, board_px.x * margin),
+				maxf(visible_world.y, board_px.y * margin))
+		bg.scale = Vector2(cover.x / bg.texture.get_width(), cover.y / bg.texture.get_height())
+		bg.position = cam.position
 
 
 ## 自动地图范围 = Ground/Obstacles 涂格 + 实体格（Spawn/Goal/Food/Mechanism 核心）的外接矩形。
@@ -620,7 +740,8 @@ func _win() -> void:
 	if finished:
 		return
 	finished = true
-	SaveManager.record_result("level_%d" % level_id, steps)
+	if not generated_active:
+		SaveManager.record_result("level_%d" % level_id, steps)
 	EventManager.level_cleared.emit(level_id, steps)
 	# 胜利剧情：先播完（含跳过）再弹结算面板；await 期间 R 重开则不再显示
 	if not story_win.is_empty():

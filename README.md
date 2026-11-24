@@ -1,6 +1,6 @@
 # Growth · 阿吉与花海（algee & blooms）
 
-> 2026  YIGUANG Project GameJam · 主题 **Grow** · 引擎 Godot 4.7 · 语言 GDScript
+> 2026  YIGUANG Project GameJam · 主题 **Grow** · 引擎 Godot 4.7（.NET/mono）· 语言 GDScript（表现层）+ C#（规则与算法，单一权威）
 
 **《阿吉与花海》（algee & blooms）**是一款 2D 俯视网格解谜游戏。不能接触花朵的阿吉（algee）和保护她的机器人查理（charlie）结伴走进花园，去寻找那些闪闪发亮的**蓝花**。
 
@@ -29,15 +29,15 @@ Growth/
 │   ├── Levels/              # LevelTemplate + Level_<nn>.tscn（关卡即场景，直编）
 │   └── Entities/            # PlayerSpawn / Food / Goal / Mechanism
 ├── Scripts/
-│   ├── Autoload/            # GameManager(balance) / EventManager / SaveManager
-│   ├── Systems/             # Level.gd（表现）/ LevelState（纯规则）/ GridSystem（网格+BFS）
+│   ├── Autoload/            # GameManager(balance) / EventManager / SaveManager / ButtonAudio / SfxManager
+│   ├── Systems/             # Level.gd（表现）/ LevelState（纯规则）/ GridSystem（网格+BFS）/ DialogueOverlay（剧情）
 │   ├── Entities/            # CellEntity 基类 / PlayerSpawn / Food / Goal / Mechanism
 │   ├── UI/  Data/           # UI 逻辑 / 数据类（Balance/MechanicShapes/GridMetrics）
 ├── Resources/
 │   ├── Config/              # Balance.tres（全局数值，可 Inspector 直接调）
 │   └── Dialogue/            # 剧情剧本 / 角色注册表（JSON）
 ├── Art/                     # Sprites / Tiles / Portraits / UI / Backdrops（正式美术 + 占位，登记 A-xx，见开发文档 §3.9）
-├── Audio/                   # SFX / Music（音频目录占位）
+├── Audio/                   # SFX（按钮 + 玩法/AVG 已接入）/ Music（待定）
 ├── tools/                   # 生成/校验工具（headless；含 LevelSolver 可解性/路线）
 ├── docs/                    # 开发文档 / 功能需求 / 架构 / 环境 / 技能 / 规则
 └── AGENTS.md                # AI 智能体角色与协作约定
@@ -53,6 +53,7 @@ Growth/
 | [docs/architecture/架构说明.md](docs/architecture/架构说明.md) | 分层 / Autoload / 事件总线 / 场景编排细节 |
 | [docs/development/环境搭建指南.md](docs/development/环境搭建指南.md) | 15 分钟配好开发环境 |
 | [docs/development/关卡制作指南.md](docs/development/关卡制作指南.md) | **设计者：新建/摆放关卡** |
+| [docs/planning/正式上线待办.md](docs/planning/正式上线待办.md) | 正式上线路线、原生算法核心与 P0/P1/P2 待办 |
 | [AGENTS.md](AGENTS.md) | AI 智能体角色与职责 |
 | [docs/agents/skills/](docs/agents/skills/) | 智能体技能模块 |
 | [docs/agents/rules/](docs/agents/rules/) | 编码规范 / 协作规范 |
@@ -61,9 +62,9 @@ Growth/
 
 - **核心循环**：S 出发 → 一格一格走 / 截断重规划 → 吃花瓣（L+2）→ 每满 N 步花丛全体扩张 → 踏入蓝花=胜；无路可走 / 身长够不到（BFS）判负。N 默认 6，单关可 override（`growth_step_interval_override`）。
 - **数值集中**：初始 L / ΔL / 机关最高阶段 / 生长周期在 `Resources/Config/Balance.tres`（@export，Inspector 直接调）；单关可用 Level 根节点 `*_override` 覆盖；脚本禁硬编码。
-- **Autoload 单例**：`GameManager`（状态/场景/持有 Balance）、`EventManager`（信号总线）、`SaveManager`（每关最佳步数存档）。
+- **Autoload 单例**：`GameManager`（状态/场景/持有 Balance）、`EventManager`（信号总线）、`SaveManager`（每关最佳步数存档）、`ButtonAudio`（按钮音）、`SfxManager`（玩法/AVG 音效）。
 - **关卡=场景直编**：每关一个 `Scenes/Levels/Level_<nn>.tscn`，在编辑器里摆 PlayerSpawn/Goal/Food/Mechanism 实体；可走区=Ground 层实际涂格，障碍用 `Obstacles` TileMapLayer 涂格（非实体）。
-- **网格判定**：走格子 / 截断 / BFS 死局判定全部基于数据（GridSystem），不使用物理碰撞。
+- **网格判定**：走格子 / 截断 / BFS 死局判定全部基于数据（LevelState + GridSystem），不使用物理碰撞。
 - **头/尾视觉**：身体中段=`PlayerCells` 管道瓦片自动拼直/弯；头=阿吉精灵表（4 方向 × 移动/停留帧）、尾=查理贴图固定在起点 S，二者为独立 Sprite（`PlayerFx`），运行期驱动。
 - **剧情演出**：部分关卡带 AVG 对话（进关 / 胜利 / 失败触发点可选挂剧情），数据在 `Resources/Dialogue/`，覆盖层运行时懒实例。
 

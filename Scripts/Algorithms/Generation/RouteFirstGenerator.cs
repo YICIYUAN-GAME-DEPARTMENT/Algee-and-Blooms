@@ -17,9 +17,15 @@ public sealed class GeneratorConfig
     /// <summary>-1 = 按难度带采样机关数量。</summary>
     public int MechanismCount { get; set; } = -1;
     public int MaxAttempts { get; set; } = 48;
+    /// <summary>每个候选最多成功构建几次来逼近目标分（失败重试不计入）。</summary>
+    public int SearchAttempts { get; set; } = 10;
     /// <summary>每关生成多少个候选，再按目标难度分选。</summary>
     public int Candidates { get; set; } = 4;
     public string Difficulty { get; set; } = "normal";
+    /// <summary>障碍模型（v5 原型）：默认蓝噪声，可切换成噪声簇 / Poisson 簇 / 贴墙生长。</summary>
+    public ObstacleModel ObstacleModel { get; set; } = ObstacleModel.BlueNoise;
+    /// <summary>生成模型（v5 原型）：经典路线优先 / 黏菌枝干。</summary>
+    public GeneratorModel GeneratorModel { get; set; } = GeneratorModel.RouteFirst;
 }
 
 /// <summary>生成结果（成功时携带完整 LevelSpec、规范路线与评分）。</summary>
@@ -32,6 +38,18 @@ public sealed class GenerationResult
     public Dictionary<string, double> Metrics { get; set; } = new();
     public string Reason { get; set; } = "";
     public int Attempts { get; set; }
+    /// <summary>本次生成的目标步数（真实最短路）。</summary>
+    public int TargetSteps { get; set; }
+    /// <summary>|真实步数 - TargetSteps|。</summary>
+    public int TargetDelta { get; set; }
+    /// <summary>目标分超出可达区间（最近格仍超出容差）。</summary>
+    public bool TargetMiss { get; set; }
+    /// <summary>本次存档占用格数（多样性代理）。</summary>
+    public int ArchiveCells { get; set; }
+    /// <summary>墙钟熔断触发（工作单元仍优先保证确定性）。</summary>
+    public bool BudgetAborted { get; set; }
+    /// <summary>实际消耗的工作单元（构建次数 × 面积折算）。</summary>
+    public double WorkUnits { get; set; }
 }
 
 /// <summary>
@@ -41,18 +59,11 @@ public sealed class GenerationResult
 ///   3. 在真实 RuleState 上随机行走（相位排花），终点 = 行走终点；
 ///   4. 机关蓝噪声撒点 + 时间窗验证；诱饵只在假捷径候选中放；
 ///   5. 用同一 RuleState 重放验证，计算评分 v2；
-///   6. 生成多个候选，按难度带目标分选。
+///   6. 生成多个候选并入 MAP-Elites 存档，按偏正态采样的目标分选格（S5）。
 /// </summary>
 public partial class RouteFirstGenerator : RefCounted
 {
-    private static readonly Vector2I[] Directions =
-    {
-        new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
-    };
-
-    private static readonly char[] DirChars = { 'A', 'D', 'W', 'S' };
-
-    private readonly struct Band
+    internal readonly struct Band
     {
         public readonly int MinSteps;
         public readonly int MaxSteps;
@@ -61,10 +72,9 @@ public partial class RouteFirstGenerator : RefCounted
         public readonly int MechCap;
         public readonly int MinMechs;
         public readonly int MaxMechs;
-        public readonly int TargetScore;
 
         public Band(int minSteps, int maxSteps, int initialMaxLen, int growthInterval, int mechCap,
-            int minMechs, int maxMechs, int targetScore)
+            int minMechs, int maxMechs)
         {
             MinSteps = minSteps;
             MaxSteps = maxSteps;
@@ -73,20 +83,84 @@ public partial class RouteFirstGenerator : RefCounted
             MechCap = mechCap;
             MinMechs = minMechs;
             MaxMechs = maxMechs;
-            TargetScore = targetScore;
         }
     }
 
-    private static Band GetBand(string difficulty)
+    internal static Band GetBand(string difficulty)
     {
         return difficulty switch
         {
-            "easy" => new Band(8, 12, 5, 7, 1, 1, 1, 55),
-            "normal" => new Band(12, 18, 4, 6, 2, 1, 2, 66),
-            "hard" => new Band(18, 26, 3, 5, 2, 2, 3, 76),
-            "expert" => new Band(26, 38, 4, 5, 4, 2, 3, 120),
-            _ => new Band(12, 18, 4, 6, 2, 1, 2, 66),
+            "easy" => new Band(10, 12, 5, 7, 1, 1, 1),
+            "normal" => new Band(14, 20, 4, 6, 2, 1, 2),
+            "hard" => new Band(20, 28, 3, 5, 2, 2, 3),
+            "expert" => new Band(26, 38, 4, 5, 4, 2, 3),
+            _ => new Band(14, 20, 4, 6, 2, 1, 2),
         };
+    }
+
+    // 高频生成下反复 new RefCounted 会触发引擎原生崩溃（0xC000001D）；
+    // 以下实例按线程复用，Setup/ResetToSpec 会清空内部状态，可安全重复使用。
+    [ThreadStatic] private static RuleState _walkState;
+    [ThreadStatic] private static RuleState _replayState;
+    [ThreadStatic] private static RuleState _solveState;
+    [ThreadStatic] private static RuleState _mechState;
+    [ThreadStatic] private static RuleState _probeState;
+    [ThreadStatic] private static RuleState _probeReplayState;
+    [ThreadStatic] private static Search.ExactBfsSolver _solver;
+
+    private static RuleState WalkState()
+    {
+        _walkState ??= new RuleState();
+        _walkState.SuppressDeadlockChecks = true;
+        _walkState.SuppressPathCheck = false;
+        return _walkState;
+    }
+
+    private static RuleState ReplayState()
+    {
+        _replayState ??= new RuleState();
+        _replayState.SuppressDeadlockChecks = false;
+        _replayState.SuppressPathCheck = true;
+        return _replayState;
+    }
+
+    private static RuleState MechState()
+    {
+        _mechState ??= new RuleState();
+        _mechState.SuppressDeadlockChecks = false;
+        _mechState.SuppressPathCheck = false;
+        return _mechState;
+    }
+
+    internal static RuleState GetSolveState()
+    {
+        _solveState ??= new RuleState();
+        _solveState.SuppressDeadlockChecks = false;
+        _solveState.SuppressPathCheck = false;
+        return _solveState;
+    }
+
+    internal static RuleState GetProbeState()
+    {
+        _probeState ??= new RuleState();
+        _probeState.SuppressDeadlockChecks = false;
+        _probeState.SuppressPathCheck = false;
+        return _probeState;
+    }
+
+    internal static RuleState GetProbeReplayState()
+    {
+        _probeReplayState ??= new RuleState();
+        _probeReplayState.SuppressDeadlockChecks = false;
+        _probeReplayState.SuppressPathCheck = false;
+        return _probeReplayState;
+    }
+
+    /// <summary>求解器复用实例（Solve 每调用自清缓存）；避免高频 new RefCounted 触发原生崩溃。</summary>
+    internal static Search.ExactBfsSolver GetSolver()
+    {
+        _solver ??= new Search.ExactBfsSolver();
+        return _solver;
     }
 
     /// <summary>窄 API：纯 C# 生成（运行时 / 工具入口）。</summary>
@@ -97,87 +171,226 @@ public partial class RouteFirstGenerator : RefCounted
 
     internal static GenerationResult GenerateCore(GeneratorConfig cfg)
     {
-        Band band = GetBand(cfg.Difficulty);
-        int candidates = Math.Max(cfg.Candidates, 1);
-        int attemptsPerCandidate = Math.Max(cfg.MaxAttempts, 1);
-        GenerationResult best = null;
-        double bestDelta = double.MaxValue;
-        int totalAttempts = 0;
-        string lastReason = "";
+        return new GenerationJob(cfg, GenerationBudget.Unlimited()).RunToCompletion();
+    }
 
-        for (int cand = 0; cand < candidates; cand++)
+    /// <summary>档位的目标步数区间（供 GenerationJob 采样目标步数）。</summary>
+    internal static (int Min, int Max) StepRange(string difficulty)
+    {
+        Band band = GetBand(difficulty);
+        return (band.MinSteps, band.MaxSteps);
+    }
+
+    /// <summary>单次构建尝试（由 GenerationJob 逐次调用，保证分帧前后顺序一致）。</summary>
+    internal readonly struct AttemptResult
+    {
+        public readonly bool Success;
+        public readonly GenerationResult Candidate;
+        public readonly string Reason;
+        public readonly double AreaFactor;
+
+        public AttemptResult(bool success, GenerationResult candidate, string reason, double areaFactor)
         {
-            for (int attempt = 0; attempt < attemptsPerCandidate; attempt++)
+            Success = success;
+            Candidate = candidate;
+            Reason = reason;
+            AreaFactor = areaFactor;
+        }
+    }
+
+    internal static AttemptResult RunAttempt(GeneratorConfig cfg, int targetSteps, int cand, int attempt)
+    {
+        Band band = GetBand(cfg.Difficulty);
+        var rng = new DeterministicRng(
+            (ulong)cfg.Seed * 0x9E3779B97F4A7C15UL
+            + (ulong)cand * 0x94D049BB133111EBUL
+            + (ulong)attempt * 0xBF58476D1CE4E5B9UL
+            + 1UL);
+
+        int mechCount = cfg.MechanismCount >= 0
+            ? cfg.MechanismCount
+            : band.MinMechs + rng.NextInt(band.MaxMechs - band.MinMechs + 1);
+
+        (int width, int height) = cfg.Width > 0 && cfg.Height > 0
+            ? (cfg.Width, cfg.Height)
+            : SizeLadder.Choose(rng, cfg.Difficulty);
+        double areaFactor = GenerationBudget.AreaFactor(width, height);
+
+        ParamSet param = ParamSampler.Sample(rng, targetSteps, mechCount);
+        if (param == null)
+        {
+            return new AttemptResult(false, null, "参数组合不可行", areaFactor);
+        }
+
+        GenerationResult candidate = TryBuild(cfg, band, rng, targetSteps, mechCount,
+            width, height, param);
+        return candidate.Success
+            ? new AttemptResult(true, candidate, "", areaFactor)
+            : new AttemptResult(false, null, candidate.Reason, areaFactor);
+    }
+
+    /// <summary>地形 / 障碍 / 出生点 / 终点的共用基底（路线优先与黏菌枝干共用）。</summary>
+    internal sealed class BaseLayout
+    {
+        public List<Cell> Floor;
+        public List<Cell> Obstacles;
+        public GridModel Grid;
+        public Cell Spawn;
+        public Cell Goal;
+    }
+
+    /// <summary>
+    /// 构建共用基底：洞窟地形 → 障碍模型撒点 → 外围出生点 + 目标步数带内的终点。
+    /// 路线优先与黏菌枝干两种生成模型都从这里起步；失败时返回 null 并给出原因。
+    /// </summary>
+    internal static BaseLayout BuildBase(GeneratorConfig cfg, DeterministicRng rng, int targetSteps,
+        int width, int height, int bandMinSteps, int bandMaxSteps, out string reason)
+    {
+        reason = "";
+        List<Cell> floor = BuildTerrain(rng, width, height, targetSteps + 8 + width);
+        if (floor == null)
+        {
+            reason = "地形连通分量过小";
+            return null;
+        }
+        if (targetSteps > 0.9 * floor.Count)
+        {
+            reason = "地板不足以承载路线";
+            return null;
+        }
+
+        // 障碍相（v3）：像 L5 一样在地板上撒障碍，再在其上选起点/终点/路线。
+        double obstacleRatio = cfg.Difficulty switch
+        {
+            "easy" => 0.05,
+            "normal" => 0.10,
+            "hard" => 0.14,
+            "expert" => 0.18,
+            _ => 0.10,
+        };
+        List<Cell> obstacles = ObstacleModels.Generate(
+            cfg.ObstacleModel, floor, width, height, rng, obstacleRatio);
+        var obstacleSet = new HashSet<Cell>(obstacles);
+        var walkable = new List<Cell>(floor.Count - obstacles.Count);
+        foreach (Cell c in floor)
+        {
+            if (!obstacleSet.Contains(c))
             {
-                totalAttempts++;
-                var rng = new DeterministicRng(
-                    (ulong)cfg.Seed * 0x9E3779B97F4A7C15UL
-                    + (ulong)cand * 0x94D049BB133111EBUL
-                    + (ulong)attempt * 0xBF58476D1CE4E5B9UL
-                    + 1UL);
-
-                int targetSteps = cfg.TargetSteps > 0
-                    ? cfg.TargetSteps
-                    : band.MinSteps + rng.NextInt(band.MaxSteps - band.MinSteps + 1);
-                int mechCount = cfg.MechanismCount >= 0
-                    ? cfg.MechanismCount
-                    : band.MinMechs + rng.NextInt(band.MaxMechs - band.MinMechs + 1);
-
-                (int width, int height) = cfg.Width > 0 && cfg.Height > 0
-                    ? (cfg.Width, cfg.Height)
-                    : SizeLadder.Choose(rng, cfg.Difficulty);
-                ParamSet param = ParamSampler.Sample(rng, targetSteps, mechCount);
-                if (param == null)
-                {
-                    lastReason = "参数组合不可行";
-                    continue;
-                }
-
-                GenerationResult candidate = TryBuild(cfg, band, rng, targetSteps, mechCount,
-                    width, height, param);
-                if (!candidate.Success)
-                {
-                    lastReason = candidate.Reason;
-                    continue;
-                }
-
-                double delta = Math.Abs(candidate.Score.Difficulty - band.TargetScore);
-                if (best == null || delta < bestDelta)
-                {
-                    best = candidate;
-                    bestDelta = delta;
-                }
-                break; // 该候选成功，继续下一个候选
+                walkable.Add(c);
             }
         }
-
-        if (best == null)
+        if (targetSteps > 0.85 * walkable.Count)
         {
-            return new GenerationResult
-            {
-                Success = false,
-                Reason = string.IsNullOrEmpty(lastReason) ? "多次尝试未找到可验证关卡" : lastReason,
-                Attempts = totalAttempts,
-            };
+            reason = "障碍后地板不足以承载路线";
+            return null;
         }
-        best.Attempts = totalAttempts;
-        return best;
+
+        // 目标优先：终点取静态距离 ≥ 档位下限的远处格。静态最短路是任何胜利路线的下界，
+        // 因此实测最短胜利步数（真实难度）有硬保证。出生点优先取外围格，保证地形有足够远的终点。
+        var grid = new GridModel(Cell.Zero, width, height);
+        foreach (Cell c in floor)
+        {
+            grid.Floor.Add(c);
+        }
+        foreach (Cell c in obstacles)
+        {
+            grid.Obstacles.Add(c);
+        }
+        var empty = new HashSet<Cell>();
+        Cell spawn = Cell.Zero;
+        Dictionary<Cell, int> distMap = null;
+        var goalPool = new List<Cell>();
+        List<Cell> spawnOrder = PeripheralSpawns(walkable, rng);
+        int spawnTries = Math.Min(spawnOrder.Count, 8);
+        for (int i = 0; i < spawnTries; i++)
+        {
+            Cell trySpawn = spawnOrder[i];
+            Dictionary<Cell, int> dm = grid.BfsDistMap(trySpawn, empty);
+            var pool = new List<Cell>();
+            foreach (KeyValuePair<Cell, int> kv in dm)
+            {
+                if (kv.Value >= bandMinSteps && kv.Value <= bandMaxSteps)
+                {
+                    pool.Add(kv.Key);
+                }
+            }
+            if (pool.Count == 0)
+            {
+                continue;
+            }
+            spawn = trySpawn;
+            distMap = dm;
+            goalPool = pool;
+            break;
+        }
+        if (goalPool.Count == 0)
+        {
+            reason = "地形缺少足够远的终点";
+            return null;
+        }
+        goalPool.Sort((a, b) =>
+        {
+            int da = Math.Abs(distMap[a] - targetSteps);
+            int db = Math.Abs(distMap[b] - targetSteps);
+            return da != db ? da.CompareTo(db) : a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
+        });
+        Cell goal = goalPool[rng.NextInt(Math.Min(goalPool.Count, 16))];
+
+        return new BaseLayout
+        {
+            Floor = floor,
+            Obstacles = obstacles,
+            Grid = grid,
+            Spawn = spawn,
+            Goal = goal,
+        };
     }
 
     private static GenerationResult TryBuild(GeneratorConfig cfg, Band band, DeterministicRng rng,
         int targetSteps, int mechCount, int width, int height, ParamSet param)
     {
-        List<Cell> floor = BuildTerrain(rng, width, height, targetSteps + 8 + width);
-        if (floor == null)
+        BaseLayout layout = BuildBase(cfg, rng, targetSteps, width, height,
+            band.MinSteps, band.MaxSteps, out string baseReason);
+        if (layout == null)
         {
-            return Fail("地形连通分量过小");
+            return Fail(baseReason);
         }
-        if (targetSteps > 0.9 * floor.Count)
+        List<Cell> floor = layout.Floor;
+        List<Cell> obstacles = layout.Obstacles;
+        GridModel grid = layout.Grid;
+        Cell spawn = layout.Spawn;
+        Cell goal = layout.Goal;
+
+        List<Cell> path = BfsPath(grid, spawn, goal);
+        if (path == null || path.Count - 1 < band.MinSteps)
         {
-            return Fail("地板不足以承载路线");
+            return Fail("终点路径不足");
         }
 
-        Cell spawn = floor[rng.NextInt(floor.Count)];
+        // v3：在基础最短路上选瓶颈格放“封路核心”，逼出真实绕行（像 L5 的花墙）。
+        var blockers = new List<Cell>();
+        int blockerTarget = cfg.Difficulty switch
+        {
+            "expert" => 2,
+            _ => 1,
+        };
+        for (int b = 0; b < blockerTarget && b < mechCount; b++)
+        {
+            Cell blocker = PickBlocker(grid, spawn, goal, path, rng);
+            if (blocker.Equals(Cell.Zero))
+            {
+                break;
+            }
+            grid.Obstacles.Add(blocker);
+            List<Cell> detour = BfsPath(grid, spawn, goal);
+            if (detour == null || detour.Count - 1 < band.MinSteps)
+            {
+                grid.Obstacles.Remove(blocker);
+                break;
+            }
+            blockers.Add(blocker);
+            path = detour;
+        }
 
         var spec = new LevelSpec
         {
@@ -188,38 +401,74 @@ public partial class RouteFirstGenerator : RefCounted
             Width = width,
             Height = height,
             Floor = floor,
+            Obstacles = obstacles,
             Spawn = spawn,
-            Goal = new Cell(-1, -1), // 行走阶段占位，完成后替换为终点
+            Goal = goal,
             InitialMaxLen = param.InitialMaxLen,
             FoodLenGain = param.FoodLenGain,
             GrowthInterval = param.GrowthInterval,
             MechanismCap = param.MechanismCap,
-            TargetScore = band.TargetScore,
+            TargetSteps = targetSteps,
             ParamSignature = param.Signature,
         };
-
-        var requiredFoods = new List<Cell>();
-        var walked = new HashSet<Cell> { spawn };
-        var trailOrder = new List<Cell>();
-        if (!RandomWalk(spec, rng, targetSteps, requiredFoods, walked, out List<char> dirs,
-                out Cell head, trailOrder, param.RequiredFoods + 2))
+        foreach (Cell blocker in blockers)
         {
-            return Fail("随机行走失败");
+            spec.MechCenters.Add(blocker);
+            spec.MechInitialLevels.Add(0);
         }
 
-        spec.Goal = head;
-        string route = new(dirs.ToArray());
+        var walked = new HashSet<Cell> { spawn };
+        var trailOrder = new List<Cell>();
+        int foodBudget = (int)Math.Ceiling(
+            (path.Count - 1 - param.InitialMaxLen) / (double)param.FoodLenGain) + 3;
+        if (!WalkPath(spec, path, walked, out string route, trailOrder, foodBudget))
+        {
+            return Fail("路径行走失败");
+        }
 
         // 路线确定后放机关：蓝噪声撒点 + 时间窗验证；极端地形放不下时允许 0 机关。
-        int placed = PlaceMechanisms(spec, rng, walked, trailOrder, mechCount, param.InitialLevels);
-        if (placed == 0 && mechCount > 0)
+        int remainingMechs = Math.Max(0, mechCount - blockers.Count);
+        int placed = PlaceMechanisms(spec, rng, walked, trailOrder, remainingMechs, param.InitialLevels);
+        if (spec.MechCenters.Count == 0 && mechCount > 0)
         {
             // 保留关卡可玩性：无机关仍可作为低难度样本，不因放置失败丢弃整张图。
             spec.MechCenters.Clear();
             spec.MechInitialLevels.Clear();
         }
 
-        AddDecoyFoods(rng, spec, walked, route.Length, 0, 2);
+        // v3：尝试把 1–2 片“面包屑”花瓣移到路线外侧，逼出真实绕行；
+        // 只有精确求解仍可解且路线确实经过新位置时才保留。
+        ShiftFoodsOffPath(spec, walked, band);
+
+        int decoyMin = cfg.Difficulty is "hard" or "expert" ? 1 : 0;
+        AddDecoyFoods(rng, spec, walked, route.Length, decoyMin, 2);
+
+        // v3：用精确求解器的最短路作为规范路线（真实难度）；UNKNOWN 的 hard/expert 候选直接丢弃。
+        int solveStates = 0;
+        RuleState solveState = GetSolveState();
+        solveState.Setup(spec);
+        solveState.Start();
+        var solver = GetSolver();
+        Godot.Collections.Dictionary solved = solver.Solve(solveState, 1_200_000);
+        string solveStatus = solved["status"].AsString();
+        if (solveStatus == "SOLVABLE")
+        {
+            int minSteps = solved["steps"].AsInt32();
+            if (minSteps < band.MinSteps)
+            {
+                return Fail("真实最短路短于档位下限");
+            }
+            route = solved["route"].AsString();
+            solveStates = solved["states"].AsInt32();
+        }
+        else if (solveStatus == "UNSOLVABLE")
+        {
+            return Fail("精确求解无解");
+        }
+        else if (band.MinSteps >= 16)
+        {
+            return Fail("精确求解超预算");
+        }
 
         if (!ReplayVerify(spec, route))
         {
@@ -237,8 +486,261 @@ public partial class RouteFirstGenerator : RefCounted
                 Route = route,
             },
         };
-        result.Score = ComputeScore(spec, route, result.Metrics, BuildScoreOptions(Math.Max(width, height)));
+        result.Score = ComputeScore(spec, route, result.Metrics,
+            BuildScoreOptions(Math.Max(width, height)), solveStates);
         return result;
+    }
+
+    /// <summary>
+    /// 从基础最短路中挑一个“封路”瓶颈：移除它后静态距离增加最多的格（前 3 随机）。
+    /// 该格随后作为初始机关核心放在路径上，迫使真实路线绕行。
+    /// </summary>
+    private static Cell PickBlocker(GridModel grid, Cell spawn, Cell goal,
+        IReadOnlyList<Cell> path, DeterministicRng rng)
+    {
+        if (path.Count < 6)
+        {
+            return Cell.Zero;
+        }
+        int baseDist = path.Count - 1;
+        var candidates = new List<(Cell Cell, int Dist)>();
+        var noMech = new HashSet<Cell>();
+        for (int i = 2; i < path.Count - 1; i++)
+        {
+            Cell c = path[i];
+            if (c.Equals(spawn) || c.Equals(goal))
+            {
+                continue;
+            }
+            grid.Obstacles.Add(c);
+            Dictionary<Cell, int> dm = grid.BfsDistMap(spawn, noMech);
+            grid.Obstacles.Remove(c);
+            if (dm.TryGetValue(goal, out int dist) && dist > baseDist)
+            {
+                candidates.Add((c, dist));
+            }
+        }
+        if (candidates.Count == 0)
+        {
+            return Cell.Zero;
+        }
+        candidates.Sort((a, b) => b.Dist.CompareTo(a.Dist));
+        return candidates[rng.NextInt(Math.Min(candidates.Count, 3))].Cell;
+    }
+
+    /// <summary>
+    /// 把路径上的花瓣移到相邻的路线外格：精确求解仍可解且确实经过新格才保留，
+    /// 用来制造“必须绕路吃花”的真实路线（而不是沿路面包屑）。
+    /// </summary>
+    private static void ShiftFoodsOffPath(LevelSpec spec, HashSet<Cell> walked, Band band)
+    {
+        var floorSet = new HashSet<Cell>(spec.Floor);
+        var obstacleSet = new HashSet<Cell>(spec.Obstacles);
+        var mechSet = new HashSet<Cell>(spec.MechCenters);
+        Cell[] dirs =
+        {
+            new(1, 0), new(-1, 0), new(0, 1), new(0, -1),
+        };
+        int shifted = 0;
+        for (int i = spec.Foods.Count - 1; i >= 0 && shifted < 2; i--)
+        {
+            Cell food = spec.Foods[i];
+            if (!walked.Contains(food))
+            {
+                continue;
+            }
+            Cell replacement = Cell.Zero;
+            foreach (Cell d in dirs)
+            {
+                Cell c = food + d;
+                if (!floorSet.Contains(c) || obstacleSet.Contains(c) || mechSet.Contains(c)
+                    || c.Equals(spec.Spawn) || c.Equals(spec.Goal) || spec.Foods.Contains(c))
+                {
+                    continue;
+                }
+                replacement = c;
+                break;
+            }
+            if (replacement.Equals(Cell.Zero))
+            {
+                continue;
+            }
+            spec.Foods[i] = replacement;
+            if (ProbeSolveVisits(spec, replacement, band.MinSteps))
+            {
+                shifted++;
+            }
+            else
+            {
+                spec.Foods[i] = food;
+            }
+        }
+    }
+
+    /// <summary>探测：完整规则下可解、步数达标、且路线确实经过 target。</summary>
+    private static bool ProbeSolveVisits(LevelSpec spec, Cell target, int minSteps)
+    {
+        var state = GetProbeState();
+        state.Setup(spec);
+        state.Start();
+        var solver = GetSolver();
+        Godot.Collections.Dictionary solved = solver.Solve(state, 300_000);
+        if (solved["status"].AsString() != "SOLVABLE" || solved["steps"].AsInt32() < minSteps)
+        {
+            return false;
+        }
+        string route = solved["route"].AsString();
+        var replay = GetProbeReplayState();
+        replay.Setup(spec);
+        replay.Start();
+        foreach (char ch in route)
+        {
+            replay.StepCore(DirCellForChar(ch));
+            if (replay.Head.Equals(target))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>出生点候选：优先远离地形质心的外围格（随机打散前 32 个）。</summary>
+    private static List<Cell> PeripheralSpawns(IReadOnlyList<Cell> floor, DeterministicRng rng)
+    {
+        double cx = 0;
+        double cy = 0;
+        foreach (Cell c in floor)
+        {
+            cx += c.X;
+            cy += c.Y;
+        }
+        cx /= floor.Count;
+        cy /= floor.Count;
+
+        var ordered = new List<Cell>(floor);
+        ordered.Sort((a, b) =>
+        {
+            double da = Math.Abs(a.X - cx) + Math.Abs(a.Y - cy);
+            double db = Math.Abs(b.X - cx) + Math.Abs(b.Y - cy);
+            int cmp = db.CompareTo(da);
+            return cmp != 0 ? cmp : a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
+        });
+        int pool = Math.Min(ordered.Count, 32);
+        var head = ordered.GetRange(0, pool);
+        rng.Shuffle(head);
+        return head;
+    }
+
+    /// <summary>BFS 最短路（含起点与终点）；不可达返回 null。</summary>
+    internal static List<Cell> BfsPath(GridModel grid, Cell from, Cell to)
+    {
+        if (from.Equals(to))
+        {
+            return new List<Cell> { from };
+        }
+        var parent = new Dictionary<Cell, Cell>();
+        var visited = new HashSet<Cell> { from };
+        var queue = new Queue<Cell>();
+        var noMech = new HashSet<Cell>();
+        queue.Enqueue(from);
+        bool found = false;
+        while (queue.Count > 0 && !found)
+        {
+            Cell cur = queue.Dequeue();
+            foreach (Cell n in GridModel.Neighbors(cur))
+            {
+                if (visited.Contains(n) || !grid.InBounds(n) || grid.IsBlocked(n, noMech))
+                {
+                    continue;
+                }
+                visited.Add(n);
+                parent[n] = cur;
+                if (n.Equals(to))
+                {
+                    found = true;
+                    break;
+                }
+                queue.Enqueue(n);
+            }
+        }
+        if (!found)
+        {
+            return null;
+        }
+        var path = new List<Cell>();
+        Cell step = to;
+        while (!step.Equals(from))
+        {
+            path.Add(step);
+            step = parent[step];
+        }
+        path.Add(from);
+        path.Reverse();
+        return path;
+    }
+
+    /// <summary>沿给定简单路径逐格行走；濒死时在下一步自动排花（相位排花）。</summary>
+    internal static bool WalkPath(LevelSpec spec, IReadOnlyList<Cell> path, HashSet<Cell> walked,
+        out string route, List<Cell> trailOrder, int foodBudget)
+    {
+        route = "";
+        trailOrder.Clear();
+        trailOrder.Add(spec.Spawn);
+        var dirs = new List<char>(path.Count - 1);
+        RuleState st = WalkState();
+        st.Setup(spec);
+        st.Start();
+
+        int inserted = 0;
+        for (int i = 1; i < path.Count; i++)
+        {
+            Cell next = path[i];
+            Cell delta = next - st.Head;
+            RuleState.MoveKind kind = st.ClassifyMove(next);
+            if (kind == RuleState.MoveKind.Rejected)
+            {
+                return false;
+            }
+            if (kind == RuleState.MoveKind.Walk
+                && st.GetRemainingSteps() <= 1
+                && inserted < foodBudget
+                && !spec.Foods.Contains(next)
+                && !next.Equals(spec.Goal)
+                && !next.Equals(spec.Spawn))
+            {
+                spec.Foods.Add(next);
+                st.AddFood(next);
+                inserted++;
+            }
+
+            RuleState.StepOutcome outcome = st.StepCore(delta);
+            if (!outcome.Accepted)
+            {
+                return false;
+            }
+            dirs.Add(DirCharFor(delta));
+            walked.Add(st.Head);
+            trailOrder.Add(st.Head);
+            if (st.GetRemainingSteps() <= 0 && kind != RuleState.MoveKind.Body)
+            {
+                return false;
+            }
+        }
+        route = new string(dirs.ToArray());
+        return st.Head.Equals(spec.Goal);
+    }
+
+    private static char DirCharFor(Cell delta)
+    {
+        if (delta.X < 0)
+        {
+            return 'A';
+        }
+        if (delta.X > 0)
+        {
+            return 'D';
+        }
+        return delta.Y < 0 ? 'W' : 'S';
     }
 
     // ── 地形：噪波 + 细胞自动机 + 最大连通分量 ─────────────────
@@ -341,7 +843,7 @@ public partial class RouteFirstGenerator : RefCounted
     }
 
     // ── 机关：蓝噪声撒点 + 时间窗验证（不做逐候选整条重放）────────────
-    private static int PlaceMechanisms(LevelSpec spec, DeterministicRng rng, HashSet<Cell> walked,
+    internal static int PlaceMechanisms(LevelSpec spec, DeterministicRng rng, HashSet<Cell> walked,
         IReadOnlyList<Cell> trailOrder, int count, IReadOnlyList<int> initialLevels)
     {
         if (count <= 0)
@@ -349,9 +851,11 @@ public partial class RouteFirstGenerator : RefCounted
             return 0;
         }
         var pool = new List<(Cell Cell, int Step)>();
+        var obstacleSet = new HashSet<Cell>(spec.Obstacles);
         foreach (Cell c in spec.Floor)
         {
-            if (walked.Contains(c) || c.Equals(spec.Spawn) || c.Equals(spec.Goal))
+            if (obstacleSet.Contains(c) || walked.Contains(c)
+                || c.Equals(spec.Spawn) || c.Equals(spec.Goal))
             {
                 continue;
             }
@@ -369,61 +873,81 @@ public partial class RouteFirstGenerator : RefCounted
                 pool.Add((c, nearestStep));
             }
         }
-        // 优先路线前段：机关越早出现，时间窗越容易满足，也形成"从起点开始的压力"。
-        pool.Sort((a, b) => a.Step.CompareTo(b.Step));
-        for (int i = 0; i < pool.Count;)
+        if (pool.Count == 0)
         {
-            int j = i;
-            while (j < pool.Count && pool[j].Step == pool[i].Step)
-            {
-                j++;
-            }
-            for (int k = j - 1; k > i; k--)
-            {
-                int r = i + rng.NextInt(k - i + 1);
-                (pool[k], pool[r]) = (pool[r], pool[k]);
-            }
-            i = j;
+            return 0;
         }
 
-        var state = new RuleState();
-        int placed = 0;
-        foreach ((Cell c, int _) in pool)
+        // v3：按路线弧长分层，每段优先放一个核心，让核心沿路线均布，而不是全挤在出生点。
+        int segments = Math.Max(1, Math.Min(count, trailOrder.Count));
+        var buckets = new List<(Cell Cell, int Step)>[segments];
+        for (int i = 0; i < segments; i++)
         {
-            if (placed >= count)
+            buckets[i] = new List<(Cell, int)>();
+        }
+        foreach ((Cell c, int step) in pool)
+        {
+            int seg = Math.Min(segments - 1, step * segments / Math.Max(1, trailOrder.Count));
+            buckets[seg].Add((c, step));
+        }
+        foreach (List<(Cell Cell, int Step)> bucket in buckets)
+        {
+            rng.Shuffle(bucket);
+        }
+
+        RuleState state = MechState();
+        int placed = 0;
+        for (int seg = 0; seg < segments && placed < count; seg++)
+        {
+            foreach ((Cell c, int _) in buckets[seg])
             {
-                break;
-            }
-            bool tooClose = false;
-            foreach (Cell chosen in spec.MechCenters)
-            {
-                if (Chebyshev(chosen, c) < 3)
+                if (TryPlaceMechanism(spec, state, trailOrder, c, placed, initialLevels))
                 {
-                    tooClose = true;
+                    placed++;
                     break;
                 }
             }
-            if (tooClose)
+        }
+        if (placed < count)
+        {
+            rng.Shuffle(pool);
+            foreach ((Cell c, int _) in pool)
             {
-                continue;
-            }
-
-            int initial = placed < initialLevels.Count ? initialLevels[placed] : 0;
-            initial = Math.Clamp(initial, 0, Math.Max(spec.MechanismCap - 1, 0));
-            spec.MechCenters.Add(c);
-            spec.MechInitialLevels.Add(initial);
-            state.ResetToSpec(spec);
-            if (ValidateMechanismWindows(spec, state, trailOrder))
-            {
-                placed++;
-            }
-            else
-            {
-                spec.MechCenters.RemoveAt(spec.MechCenters.Count - 1);
-                spec.MechInitialLevels.RemoveAt(spec.MechInitialLevels.Count - 1);
+                if (placed >= count)
+                {
+                    break;
+                }
+                if (TryPlaceMechanism(spec, state, trailOrder, c, placed, initialLevels))
+                {
+                    placed++;
+                }
             }
         }
         return placed;
+    }
+
+    private static bool TryPlaceMechanism(LevelSpec spec, RuleState state,
+        IReadOnlyList<Cell> trailOrder, Cell c, int index, IReadOnlyList<int> initialLevels)
+    {
+        foreach (Cell chosen in spec.MechCenters)
+        {
+            if (Chebyshev(chosen, c) < 3)
+            {
+                return false;
+            }
+        }
+        int initial = index < initialLevels.Count ? initialLevels[index] : 0;
+        initial = Math.Clamp(initial, 0, Math.Max(spec.MechanismCap - 1, 0));
+        spec.MechCenters.Add(c);
+        spec.MechInitialLevels.Add(initial);
+        state.ResetToSpec(spec);
+        if (ValidateMechanismWindows(spec, state, trailOrder))
+        {
+            return true;
+        }
+        spec.MechCenters.RemoveAt(spec.MechCenters.Count - 1);
+        spec.MechInitialLevels.RemoveAt(spec.MechInitialLevels.Count - 1);
+        return false;
     }
 
     /// <summary>
@@ -449,130 +973,11 @@ public partial class RouteFirstGenerator : RefCounted
         return true;
     }
 
-    // ── 随机规则行走：相位排花，不做"濒死回填 + 整条重放" ─────────────
-    private static bool RandomWalk(LevelSpec spec, DeterministicRng rng, int targetSteps,
-        List<Cell> requiredFoods, HashSet<Cell> walked, out List<char> dirs, out Cell head,
-        List<Cell> trailOrder, int foodBudget)
-    {
-        dirs = new List<char>(targetSteps);
-        trailOrder.Clear();
-        trailOrder.Add(spec.Spawn);
-        head = spec.Spawn;
-
-        var st = new RuleState { SuppressDeadlockChecks = true };
-        st.Setup(spec);
-        st.Start();
-
-        int inserted = 0;
-        int lastDir = -1;
-        int biasDir = rng.NextInt(Directions.Length);
-
-        for (int step = 0; step < targetSteps; step++)
-        {
-            int pick = ChooseDirection(st, rng, lastDir, biasDir);
-            if (pick < 0)
-            {
-                // 没有合法方向：地形堵死，换下一张候选图。
-                return false;
-            }
-
-            Cell next = new(st.Head.X + Directions[pick].X, st.Head.Y + Directions[pick].Y);
-            RuleState.MoveKind kind = st.ClassifyMove(next);
-            if (kind == RuleState.MoveKind.Walk
-                && st.GetRemainingSteps() <= 1
-                && inserted < foodBudget
-                && !spec.Foods.Contains(next)
-                && !next.Equals(spec.Goal)
-                && !next.Equals(spec.Spawn))
-            {
-                // 相位排花：把花瓣放在下一步，走进去立即吃；直接生效，不重放。
-                spec.Foods.Add(next);
-                requiredFoods.Add(next);
-                st.AddFood(next);
-                inserted++;
-            }
-
-            RuleState.StepOutcome outcome = st.StepCore(
-                new Cell(Directions[pick].X, Directions[pick].Y));
-            if (!outcome.Accepted)
-            {
-                return false;
-            }
-            dirs.Add(DirChars[pick]);
-            walked.Add(st.Head);
-            trailOrder.Add(st.Head);
-            lastDir = pick;
-
-            if (st.GetRemainingSteps() <= 0 && kind != RuleState.MoveKind.Body)
-            {
-                // 食物预算不足，继续必饥饿。
-                return false;
-            }
-        }
-
-        head = st.Head;
-        return true;
-    }
-
-    /// <summary>
-    /// 方向选择：Walk 优先，8% 概率故意截断；55% 主方向偏置 + 60% 惯性，
-    /// 让路线整体朝一个方向推进、减少无意义折返。
-    /// </summary>
-    private static int ChooseDirection(RuleState st, DeterministicRng rng, int lastDir, int biasDir)
-    {
-        Span<int> walkOptions = stackalloc int[4];
-        Span<int> bodyOptions = stackalloc int[4];
-        int walkCount = 0;
-        int bodyCount = 0;
-        for (int i = 0; i < Directions.Length; i++)
-        {
-            Cell next = new(st.Head.X + Directions[i].X, st.Head.Y + Directions[i].Y);
-            RuleState.MoveKind kind = st.ClassifyMove(next);
-            if (kind == RuleState.MoveKind.Walk)
-            {
-                walkOptions[walkCount++] = i;
-            }
-            else if (kind == RuleState.MoveKind.Body)
-            {
-                bodyOptions[bodyCount++] = i;
-            }
-        }
-        if (walkCount > 0)
-        {
-            if (bodyCount > 0 && rng.NextInt(100) < 8)
-            {
-                return bodyOptions[rng.NextInt(bodyCount)];
-            }
-            if (biasDir >= 0 && rng.NextInt(100) < 55)
-            {
-                for (int i = 0; i < walkCount; i++)
-                {
-                    if (walkOptions[i] == biasDir)
-                    {
-                        return biasDir;
-                    }
-                }
-            }
-            if (lastDir >= 0 && rng.NextInt(100) < 60)
-            {
-                for (int i = 0; i < walkCount; i++)
-                {
-                    if (walkOptions[i] == lastDir)
-                    {
-                        return lastDir;
-                    }
-                }
-            }
-            return walkOptions[rng.NextInt(walkCount)];
-        }
-        return bodyCount > 0 ? bodyOptions[rng.NextInt(bodyCount)] : -1;
-    }
-
     /// <summary>
     /// 诱饵：只在「看起来更短」的假捷径候选里放（dist(S,d)+dist(d,E) ≤ S-2），
     /// 且不与规范路线重叠（不会被吃到）。精确真假由评分期的 M14 复核。
     /// </summary>
-    private static void AddDecoyFoods(DeterministicRng rng, LevelSpec spec, HashSet<Cell> walked,
+    internal static void AddDecoyFoods(DeterministicRng rng, LevelSpec spec, HashSet<Cell> walked,
         int steps, int min, int max)
     {
         int count;
@@ -630,9 +1035,9 @@ public partial class RouteFirstGenerator : RefCounted
 
     // ── 验证与评分 ──────────────────────────────────────────
     /// <summary>用同一套 RuleState 重放路线：必须全部 accepted、途中无死局、最终到 E。</summary>
-    private static bool ReplayVerify(LevelSpec spec, string route)
+    internal static bool ReplayVerify(LevelSpec spec, string route)
     {
-        var st = new RuleState { SuppressPathCheck = true };
+        RuleState st = ReplayState();
         st.Setup(spec);
         st.Start();
         foreach (char ch in route)
@@ -654,7 +1059,7 @@ public partial class RouteFirstGenerator : RefCounted
     /// 尺寸降级矩阵（S3 起）：小图完整算 C 类；18/20 关闭 M14/M16 以守住预算。
     /// Top-K 数量在 S5 的 MAP-Elites 中落地，这里先控制评分开销。
     /// </summary>
-    private static MetricOptions BuildScoreOptions(int maxSize)
+    internal static MetricOptions BuildScoreOptions(int maxSize)
     {
         if (maxSize <= 14)
         {
@@ -676,18 +1081,25 @@ public partial class RouteFirstGenerator : RefCounted
         }
         return new MetricOptions
         {
-            EnableFalseAffordance = false,
+            EnableFalseAffordance = true,
             EnableFunnel = false,
             EnableNaiveStrategies = true,
             SolveNodeBudget = 8_000,
         };
     }
 
-    private static LevelScore ComputeScore(LevelSpec spec, string route,
-        Dictionary<string, double> metrics, MetricOptions options)
+    internal static LevelScore ComputeScore(LevelSpec spec, string route,
+        Dictionary<string, double> metrics, MetricOptions options, int solveStates = 0)
     {
+        if (solveStates > 0)
+        {
+            options.SolveStatesOverride = solveStates;
+            options.EnableSolveStates = false;
+        }
         MetricVector vector = MetricExtractor.Extract(spec, route, options);
-        int difficulty = ScoreSpline.Default.InterpolateRounded(vector.DRaw);
+        // v4（方案 C）：难度分在 GenerationJob.Finish 里用枝干先验/后验计算，
+        // 这里先保留核心指标与质量分，避免每个候选都重复跑枝干测量。
+        int difficulty = 0;
         Dictionary<string, double> values = vector.ToDictionary();
         foreach (KeyValuePair<string, double> kv in values)
         {
@@ -711,12 +1123,44 @@ public partial class RouteFirstGenerator : RefCounted
             Total = difficulty,
             Difficulty = difficulty,
             Quality = (int)Math.Round(quality),
-            ScoringVersion = 2,
+            ScoringVersion = 4,
             Metrics = values,
             Tags = tags.Tags,
             TagEvidence = tags.Evidence,
+            TargetSteps = spec.TargetSteps,
             CEstimated = vector.CEstimated,
         };
+    }
+
+    /// <summary>
+    /// v4 最终评分（方案 C）：枝干静态先验 + 逐步动态后验 + 核心难度项，
+    /// 只对 MAP-Elites 选出的最终关卡计算一次，避免每个候选重复跑枝干测量。
+    /// </summary>
+    internal static void ApplyBranchScore(GenerationResult result, long seed)
+    {
+        if (result == null || !result.Success || result.Spec == null
+            || result.Solution == null || result.Score == null)
+        {
+            return;
+        }
+        BranchPosteriorFeatures branch = BranchPosteriorScorer.Extract(
+            result.Spec, result.Solution.Route, seed);
+        double dCore = result.Metrics.TryGetValue("d_core", out double core) ? core : 0;
+        var vector = new MetricVector { DCore = dCore };
+        double raw = BranchScoreSchemes.Hybrid(branch, vector);
+        // v5：原始值线性刻度（ScoreOffset），不再经锚点样条映射。
+        int difficulty = BranchScoreSchemes.ScoreForRaw(raw);
+        result.Score.Difficulty = difficulty;
+        result.Score.Total = difficulty;
+        result.Score.ScoringVersion = 5;
+        result.Metrics["d_v5"] = raw;
+        result.Score.Metrics["d_v5"] = raw;
+        foreach (KeyValuePair<string, double> kv in branch.ToDictionary())
+        {
+            string key = "posterior_" + kv.Key;
+            result.Metrics[key] = kv.Value;
+            result.Score.Metrics[key] = kv.Value;
+        }
     }
 
     private static int Chebyshev(Cell a, Cell b)
@@ -743,7 +1187,7 @@ public partial class RouteFirstGenerator : RefCounted
 }
 
 /// <summary>确定性 RNG（xorshift64*），保证同一 seed 跨平台/跨进程结果一致。</summary>
-internal sealed class DeterministicRng
+public sealed class DeterministicRng
 {
     private ulong _state;
 
@@ -763,6 +1207,12 @@ internal sealed class DeterministicRng
     public int NextInt(int maxExclusive)
     {
         return maxExclusive <= 0 ? 0 : (int)(NextU64() % (ulong)maxExclusive);
+    }
+
+    /// <summary>uniform [0, 1)。</summary>
+    public double NextDouble()
+    {
+        return (NextU64() >> 11) * (1.0 / 9007199254740992.0);
     }
 
     public void Shuffle<T>(IList<T> list)

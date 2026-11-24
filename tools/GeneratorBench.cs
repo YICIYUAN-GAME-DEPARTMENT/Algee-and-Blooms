@@ -68,6 +68,14 @@ public partial class GeneratorBench : Node
         bool determinismOk = true;
         var sizeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var tagCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var allScores = new List<int>();
+        var targetDeltas = new List<int>();
+        var targetTotals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var targetMisses = new Dictionary<string, int>(StringComparer.Ordinal);
+        int targetMissCount = 0;
+        var workUnits = new List<double>();
+        var stepValues = new List<int>();
+        int budgetAborted = 0;
         foreach (string tag in TagNames)
         {
             tagCounts[tag] = 0;
@@ -125,7 +133,7 @@ public partial class GeneratorBench : Node
                 row["schema_version"] = result.Spec.SchemaVersion;
                 row["tier_label"] = result.Spec.Tier;
                 row["param_signature"] = result.Spec.ParamSignature;
-                row["target_score"] = result.Spec.TargetScore;
+                row["target_steps"] = result.Spec.TargetSteps;
                 row["attempts_used"] = result.Attempts;
                 row["steps"] = result.Solution.Steps;
                 row["floor_count"] = result.Spec.Floor.Count;
@@ -148,6 +156,12 @@ public partial class GeneratorBench : Node
                 row["tag_evidence"] = evidenceObj;
                 row["score"] = result.Score?.Difficulty ?? 0;
                 row["quality"] = result.Score?.Quality ?? 0;
+                row["target_steps"] = result.TargetSteps;
+                row["target_delta"] = result.TargetDelta;
+                row["target_miss"] = result.TargetMiss;
+                row["archive_cells"] = result.ArchiveCells;
+                row["budget_aborted"] = result.BudgetAborted;
+                row["work_units"] = Round3(result.WorkUnits);
                 row["spec_sha256"] = Sha256(specJson);
                 row["deterministic"] = same;
 
@@ -155,7 +169,25 @@ public partial class GeneratorBench : Node
                 {
                     ok++;
                     tierOk++;
-                    perTier[tier].Add(result.Score?.Difficulty ?? 0);
+                    int score = result.Score?.Difficulty ?? 0;
+                    perTier[tier].Add(score);
+                    allScores.Add(score);
+                    workUnits.Add(result.WorkUnits);
+                    if (result.BudgetAborted)
+                    {
+                        budgetAborted++;
+                    }
+                    if (result.TargetSteps > 0)
+                    {
+                        targetDeltas.Add(result.TargetDelta);
+                        targetTotals[tier] = targetTotals.TryGetValue(tier, out int tt) ? tt + 1 : 1;
+                        if (result.TargetMiss)
+                        {
+                            targetMissCount++;
+                            targetMisses[tier] = targetMisses.TryGetValue(tier, out int tm) ? tm + 1 : 1;
+                        }
+                    }
+                    stepValues.Add(result.Solution.Steps);
                     string sizeKey = $"{result.Spec.Width}x{result.Spec.Height}";
                     sizeCounts[sizeKey] = sizeCounts.TryGetValue(sizeKey, out int sc) ? sc + 1 : 1;
                 }
@@ -206,6 +238,11 @@ public partial class GeneratorBench : Node
             },
             ["per_tier"] = PerTierJson(perTier),
             ["score_hist"] = ScoreHistJson(perTier),
+            ["score_hist5"] = ScoreHist5Json(allScores),
+            ["score_stats"] = ScoreStatsJson(allScores),
+            ["step_stats"] = StepStatsJson(stepValues),
+            ["target"] = TargetJson(targetTotals, targetMisses, targetMissCount, targetDeltas),
+            ["budget"] = BudgetJson(workUnits, budgetAborted),
             ["size_hist"] = SizeHistJson(sizeCounts),
             ["tag_coverage"] = TagCoverageJson(tagCounts, ok),
         };
@@ -218,6 +255,17 @@ public partial class GeneratorBench : Node
         GD.Print($"[GeneratorBench] n={seedRows.Count} ok={ok} fail={failed} determinism={determinismOk}");
         GD.Print($"[GeneratorBench] ms avg={avg:F2} p50={Percentile(sortedTimings, 0.50):F2} " +
                  $"p95={Percentile(sortedTimings, 0.95):F2} max={(sortedTimings.Count > 0 ? sortedTimings[^1] : 0):F2}");
+        if (allScores.Count > 0)
+        {
+            var stats = ScoreStats(allScores);
+            GD.Print($"[GeneratorBench] score mean={stats.Mean:F1} median={stats.Median:F1} " +
+                     $"sd={stats.StdDev:F1} skew={stats.Skew:F2} min={stats.Min} max={stats.Max} " +
+                     $"mode5={stats.ModeBucket5}");
+            ScoreStatsResult stepStats = ScoreStats(stepValues);
+            GD.Print($"[GeneratorBench] steps min={stepStats.Min} median={stepStats.Median:F0} max={stepStats.Max}");
+            GD.Print($"[GeneratorBench] target miss={targetMissCount / (double)Math.Max(1, targetDeltas.Count):P1} " +
+                     $"mean_delta={(targetDeltas.Count > 0 ? targetDeltas.Sum() / (double)targetDeltas.Count : 0):F1}");
+        }
         GD.Print($"[GeneratorBench] out={benchPath}");
 
         GetTree().Quit(failed == 0 && determinismOk ? 0 : 1);
@@ -324,6 +372,171 @@ public partial class GeneratorBench : Node
             };
         }
         return obj;
+    }
+
+    private static JsonObject ScoreHist5Json(List<int> scores)
+    {
+        var counts = new SortedDictionary<int, int>();
+        foreach (int score in scores)
+        {
+            int bucket = Math.Max(0, score) / 5 * 5;
+            counts[bucket] = counts.TryGetValue(bucket, out int n) ? n + 1 : 1;
+        }
+        var obj = new JsonObject();
+        foreach (KeyValuePair<int, int> kv in counts)
+        {
+            obj[$"{kv.Key}-{kv.Key + 4}"] = kv.Value;
+        }
+        return obj;
+    }
+
+    private readonly struct ScoreStatsResult
+    {
+        public readonly double Mean;
+        public readonly double Median;
+        public readonly double StdDev;
+        public readonly double Skew;
+        public readonly int Min;
+        public readonly int Max;
+        public readonly int ModeBucket5;
+        public readonly double P05;
+        public readonly double P95;
+
+        public ScoreStatsResult(double mean, double median, double stdDev, double skew,
+            int min, int max, int modeBucket5, double p05, double p95)
+        {
+            Mean = mean;
+            Median = median;
+            StdDev = stdDev;
+            Skew = skew;
+            Min = min;
+            Max = max;
+            ModeBucket5 = modeBucket5;
+            P05 = p05;
+            P95 = p95;
+        }
+    }
+
+    private static ScoreStatsResult ScoreStats(List<int> scores)
+    {
+        if (scores.Count == 0)
+        {
+            return new ScoreStatsResult(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+        var values = new List<double>(scores.Count);
+        foreach (int s in scores)
+        {
+            values.Add(s);
+        }
+        double mean = Mean(values);
+        double stdDev = StdDev(values, mean);
+        double skew = 0;
+        if (stdDev > 0)
+        {
+            double m3 = 0;
+            foreach (double v in values)
+            {
+                m3 += Math.Pow(v - mean, 3);
+            }
+            skew = (m3 / values.Count) / Math.Pow(stdDev, 3);
+        }
+        var sorted = new List<int>(scores);
+        sorted.Sort();
+        double median = sorted.Count % 2 == 0
+            ? (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2.0
+            : sorted[sorted.Count / 2];
+
+        var counts = new SortedDictionary<int, int>();
+        foreach (int score in scores)
+        {
+            int bucket = Math.Max(0, score) / 5 * 5;
+            counts[bucket] = counts.TryGetValue(bucket, out int n) ? n + 1 : 1;
+        }
+        int modeBucket = 0;
+        int modeCount = -1;
+        foreach (KeyValuePair<int, int> kv in counts)
+        {
+            if (kv.Value > modeCount)
+            {
+                modeCount = kv.Value;
+                modeBucket = kv.Key;
+            }
+        }
+        return new ScoreStatsResult(mean, median, stdDev, skew,
+            sorted[0], sorted[^1], modeBucket, sorted[(int)(sorted.Count * 0.05)], sorted[(int)(sorted.Count * 0.95)]);
+    }
+
+    private static JsonObject ScoreStatsJson(List<int> scores)
+    {
+        ScoreStatsResult stats = ScoreStats(scores);
+        return new JsonObject
+        {
+            ["n"] = scores.Count,
+            ["mean"] = Round3(stats.Mean),
+            ["median"] = Round3(stats.Median),
+            ["stddev"] = Round3(stats.StdDev),
+            ["skew"] = Round3(stats.Skew),
+            ["min"] = stats.Min,
+            ["max"] = stats.Max,
+            ["p05"] = stats.P05,
+            ["p95"] = stats.P95,
+            ["mode_bucket_5"] = $"{stats.ModeBucket5}-{stats.ModeBucket5 + 4}",
+        };
+    }
+
+    private static JsonObject StepStatsJson(List<int> steps)
+    {
+        ScoreStatsResult stats = ScoreStats(steps);
+        return new JsonObject
+        {
+            ["n"] = steps.Count,
+            ["mean"] = Round3(stats.Mean),
+            ["median"] = Round3(stats.Median),
+            ["stddev"] = Round3(stats.StdDev),
+            ["min"] = stats.Min,
+            ["max"] = stats.Max,
+            ["p05"] = stats.P05,
+            ["p95"] = stats.P95,
+        };
+    }
+
+    private static JsonObject TargetJson(Dictionary<string, int> totals, Dictionary<string, int> misses,
+        int missCount, List<int> deltas)
+    {
+        var perTier = new JsonObject();
+        foreach (string tier in totals.Keys.OrderBy(k => k, StringComparer.Ordinal))
+        {
+            int total = totals[tier];
+            int miss = misses.TryGetValue(tier, out int m) ? m : 0;
+            perTier[tier] = new JsonObject
+            {
+                ["n"] = total,
+                ["miss"] = miss,
+                ["miss_ratio"] = total > 0 ? Round3(miss / (double)total) : 0,
+            };
+        }
+        return new JsonObject
+        {
+            ["n"] = deltas.Count,
+            ["miss"] = missCount,
+            ["miss_ratio"] = deltas.Count > 0 ? Round3(missCount / (double)deltas.Count) : 0,
+            ["mean_delta"] = deltas.Count > 0 ? Round3(deltas.Sum() / (double)deltas.Count) : 0,
+            ["per_tier"] = perTier,
+        };
+    }
+
+    private static JsonObject BudgetJson(List<double> units, int aborted)
+    {
+        var sorted = new List<double>(units);
+        sorted.Sort();
+        return new JsonObject
+        {
+            ["aborted"] = aborted,
+            ["aborted_ratio"] = units.Count > 0 ? Round3(aborted / (double)units.Count) : 0,
+            ["units_mean"] = units.Count > 0 ? Round3(units.Sum() / units.Count) : 0,
+            ["units_p95"] = Round3(Percentile(sorted, 0.95)),
+            ["units_max"] = Round3(sorted.Count > 0 ? sorted[^1] : 0),
+        };
     }
 
     private static JsonArray ToJsonArray(IEnumerable<string> values)

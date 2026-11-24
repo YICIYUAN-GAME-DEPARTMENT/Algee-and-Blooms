@@ -12,8 +12,8 @@
 1. **遵循编码规范：** [coding-rules.md](../rules/coding-rules.md)（命名 / 类型标注 / 信号 / 事件驱动等）。
 2. **权威先行：** 移动/身长/截断/机关生长/BFS 规则以 [功能需求文档](../../design/功能需求文档.md) §4 为准，数值取自 `Balance.tres`；**禁止在脚本中硬编码规则数值或关卡布局**。
 3. **分层归属：**
-   - 全局生命周期 → `Scripts/Autoload/`（GameManager/EventManager/SaveManager；公共接口勿擅改）
-   - 玩法系统 → `Scripts/Systems/`（Level.gd、GridSystem），由关卡场景使用，**不进 Autoload**
+   - 全局生命周期 → `Scripts/Autoload/`（GameManager / EventManager / SaveManager / SfxManager；ButtonAudio 脚本在 `Scripts/UI/`、由 Autoload 场景挂载；公共接口勿擅改）
+   - 玩法系统 → `Scripts/Systems/`（Level.gd 表现编排 / LevelState 纯规则 / GridSystem 网格数据 / DialogueOverlay 剧情），由关卡场景使用，**不进 Autoload**
    - 实体 → `Scripts/Entities/`（CellEntity 基类 + PlayerSpawn/Mechanism/Food/Goal；障碍非实体，不在此列）
    - 数据类 → `Scripts/Data/`（Balance / MechanicShapes / GridMetrics）
 4. **通信纪律：**

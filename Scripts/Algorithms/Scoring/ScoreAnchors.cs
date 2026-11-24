@@ -45,23 +45,22 @@ public sealed class ScoreAnchors
     }
 
     /// <summary>
-    /// 内置锚点：S1 实测校准值（2026-11-24，锚点快照 tests/fixtures/score_anchors.json）。
-    /// A0 / L1 同分 5；L2 / L3 / L4 / L5 精确命中 10 / 25 / 45 / 100。
-    /// A6 / A4.5 由 S3/S5 用真实生成批次回填。
+    /// 内置锚点：v5 原始值刻度（2026-11-25，方案 C）。
+    /// Score = 原始值 + ScoreOffset；难度档由 BranchScoreSchemes.TierForScore 按分数划分。
     /// </summary>
     private static ScoreAnchors Builtin()
     {
         return new ScoreAnchors
         {
-            ScoringVersion = 2,
+            ScoringVersion = 5,
             Anchors = new List<ScoreAnchor>
             {
-                new() { Id = "A0", Name = "空场直达", DRaw = 0.0, Score = 5 },
-                new() { Id = "L1", Name = "Level_01_move", DRaw = 20.627020287757407, Score = 5 },
-                new() { Id = "L2", Name = "Level_02_petals", DRaw = 42.62791297018966, Score = 10 },
-                new() { Id = "L3", Name = "Level_03_obstacles", DRaw = 47.055281897558594, Score = 25 },
-                new() { Id = "L4", Name = "Level_04_GrowingFlowers", DRaw = 47.26505790890608, Score = 45 },
-                new() { Id = "L5", Name = "Level_05_CounterIt", DRaw = 60.499284371536646, Score = 100 },
+                new() { Id = "A0", Name = "空场直达", DRaw = 0.0, Score = 7 },
+                new() { Id = "L1", Name = "Level_01_move", DRaw = 10.6930, Score = 18 },
+                new() { Id = "L2", Name = "Level_02_petals", DRaw = 19.0357, Score = 26 },
+                new() { Id = "L3", Name = "Level_03_obstacles", DRaw = 38.1363, Score = 45 },
+                new() { Id = "L4", Name = "Level_04_GrowingFlowers", DRaw = 40.4512, Score = 47 },
+                new() { Id = "L5", Name = "Level_05_CounterIt", DRaw = 50.5430, Score = 58 },
             },
         };
     }

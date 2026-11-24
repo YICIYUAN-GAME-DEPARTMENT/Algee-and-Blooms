@@ -7,7 +7,7 @@
 
 - `godot` 不在 PATH。固定路径：
   `C:\Godot Engine\Godot_v4.7.1-stable_mono_win64\Godot_v4.7.1-stable_mono_win64_console.exe`
-- 常用命令（在 `d:\Programs\Growth` 下）：
+- 常用命令（在项目根 `d:\Programs\Algee&Blooms` 下；以本机实际克隆目录为准）：
   - 跑工具场景：`godot --headless --path . res://tools/GenSnek.tscn`
   - 资源导入（改动脚本/svg 后必跑，验证解析）：`godot --headless --path . --import`
   - 带参数：`godot --headless --path . res://tools/X.tscn -- --tres-only`

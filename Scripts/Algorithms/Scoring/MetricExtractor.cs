@@ -10,9 +10,15 @@ public sealed class MetricOptions
     public bool EnableFalseAffordance = true;
     public bool EnableFunnel = true;
     public bool EnableNaiveStrategies = true;
+    public bool EnableSolveStates = true;
+    public bool EnableRequiredFood = false;
     public int FunnelNodeBudget = 30_000;
     public int FunnelMaxCount = 2000;
     public int SolveNodeBudget = 400_000;
+    public int SolveStatesNodeBudget = 400_000;
+    public int RequiredFoodNodeBudget = 400_000;
+    /// <summary>&gt;0 时直接使用外部精确求解状态数（生成管线已求解，避免二次求解）。</summary>
+    public int SolveStatesOverride;
 }
 
 /// <summary>
@@ -25,6 +31,24 @@ public static class MetricExtractor
     {
         new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
     };
+
+    // 高频评分下复用 RefCounted，避免反复 new 触发引擎原生崩溃。
+    [ThreadStatic] private static RuleState _replayState;
+    [ThreadStatic] private static Search.ExactBfsSolver _solver;
+
+    private static RuleState ReplayState()
+    {
+        _replayState ??= new RuleState();
+        _replayState.SuppressDeadlockChecks = true;
+        _replayState.SuppressPathCheck = true;
+        return _replayState;
+    }
+
+    private static Search.ExactBfsSolver Solver()
+    {
+        _solver ??= new Search.ExactBfsSolver();
+        return _solver;
+    }
 
     public static MetricVector Extract(LevelSpec spec, string route, MetricOptions options = null)
     {
@@ -41,7 +65,7 @@ public static class MetricExtractor
         Dictionary<Cell, int> distFromGoal = grid.BfsDistMap(spec.Goal, empty);
         int shortest = distFromSpawn.TryGetValue(spec.Goal, out int sd) ? sd : 0;
 
-        var st = new RuleState { SuppressDeadlockChecks = true, SuppressPathCheck = true };
+        RuleState st = ReplayState();
         st.Setup(spec);
         st.Start();
 
@@ -71,12 +95,23 @@ public static class MetricExtractor
         int bodyKeyStep = -1;
         int bodyKeyRemaining = 0;
         int bodyKeyOptions = 0;
+        int timingMargin = int.MaxValue;
+        int coveredSteps = 0;
 
         for (int i = 0; i < steps; i++)
         {
             Cell head = st.Head;
             minSlack = Math.Min(minSlack, st.GetRemainingSteps());
             routeCells.Add(head);
+            if (st.CoverSteps.TryGetValue(head, out int coverStep))
+            {
+                int margin = coverStep * Math.Max(spec.GrowthInterval, 1) - (i + 1);
+                if (margin < timingMargin)
+                {
+                    timingMargin = margin;
+                }
+                coveredSteps++;
+            }
             int distGoal = distFromGoal.TryGetValue(head, out int dg) ? dg : int.MaxValue;
             if (distGoal != int.MaxValue)
             {
@@ -211,13 +246,22 @@ public static class MetricExtractor
         vector.M18ChoiceEntropy = entropy;
         vector.M19Size = Math.Max(spec.Width, spec.Height);
 
+        vector.M20TimingMargin = coveredSteps > 0 ? Math.Max(0, timingMargin) : -1;
+        vector.M20CoveredSteps = coveredSteps;
+
         if (options.EnableFalseAffordance)
         {
             (int count, int gap, bool estimated) = ComputeFalseAffordance(
                 spec, steps, eatenFoods, distFromSpawn, distFromGoal, options.SolveNodeBudget, st);
             vector.M14FalseAffordance = count;
             vector.M15MisleadGap = gap;
+            vector.FalseAffordanceMeasured = true;
             vector.CEstimated |= estimated;
+        }
+        else
+        {
+            vector.FalseAffordanceMeasured = false;
+            vector.CEstimated = true;
         }
 
         if (options.EnableFunnel)
@@ -226,11 +270,13 @@ public static class MetricExtractor
             Search.BoundedRouteEnumerator.Result funnel = enumerator.Enumerate(
                 spec, steps + 2, options.FunnelNodeBudget, options.FunnelMaxCount, st);
             vector.M16FunnelWidth = Math.Max(1, funnel.Count);
+            // 截断的枚举只得到下界，不能当作“解空间窄”的满分证据。
+            vector.FunnelMeasured = !funnel.Truncated;
             vector.CEstimated |= funnel.Truncated;
         }
         else
         {
-            vector.M16FunnelWidth = 1;
+            vector.FunnelMeasured = false;
             vector.CEstimated = true;
         }
 
@@ -239,6 +285,59 @@ public static class MetricExtractor
             st.SuppressDeadlockChecks = false;
             st.SuppressPathCheck = false;
             vector.M17NaiveFailRate = ComputeNaiveFailRate(spec, steps, distFromSpawn, distFromGoal, st);
+            vector.NaiveMeasured = true;
+        }
+        else
+        {
+            vector.CEstimated = true;
+        }
+
+        if (options.SolveStatesOverride > 0)
+        {
+            vector.M21SolveStates = options.SolveStatesOverride;
+            vector.SolveStatesMeasured = true;
+        }
+        else if (options.EnableSolveStates)
+        {
+            st.SuppressDeadlockChecks = false;
+            st.SuppressPathCheck = false;
+            var solver = Solver();
+            st.ResetToSpec(spec);
+            Godot.Collections.Dictionary solved = solver.Solve(st, options.SolveStatesNodeBudget);
+            if (solved["status"].AsString() != "UNKNOWN")
+            {
+                vector.M21SolveStates = solved["states"].AsInt32();
+                vector.SolveStatesMeasured = true;
+            }
+            st.ResetToSpec(spec);
+        }
+
+        if (options.EnableRequiredFood && spec.Foods.Count > 0)
+        {
+            var solver = Solver();
+            int required = 0;
+            int considered = 0;
+            foreach (Cell food in spec.Foods)
+            {
+                if (considered >= 8)
+                {
+                    break;
+                }
+                considered++;
+                LevelSpec without = CloneSpec(spec, food);
+                st.ResetToSpec(without);
+                Godot.Collections.Dictionary res = solver.Solve(st, options.RequiredFoodNodeBudget);
+                string status = res["status"].AsString();
+                if (status == "UNSOLVABLE"
+                    || (status == "SOLVABLE" && res["steps"].AsInt32() > steps + 2))
+                {
+                    required++;
+                }
+            }
+            st.ResetToSpec(spec);
+            vector.M23RequiredFoods = required;
+            vector.M23FoodCount = considered;
+            vector.RequiredFoodMeasured = true;
         }
 
         Normalize(vector);
@@ -266,15 +365,44 @@ public static class MetricExtractor
         v.NaiveNorm = Clamp01(v.M17NaiveFailRate);
         v.EntropyNorm = Clamp01(v.M18ChoiceEntropy / (1.5 * Math.Max(1, v.M01Steps)));
         v.SizeNorm = Clamp01((v.M19Size - 10) / 10.0);
+        v.TimingNorm = v.M20CoveredSteps > 0 && v.M20TimingMargin >= 0
+            ? 1.0 - Clamp01(v.M20TimingMargin / 4.0)
+            : 0.0;
+        v.SolveStatesNorm = v.SolveStatesMeasured
+            ? Clamp01((Math.Log10(Math.Max(1, v.M21SolveStates)) - 3.0) / 2.0)
+            : 0.0;
+        v.RequiredFoodNorm = v.RequiredFoodMeasured && v.M23FoodCount > 0
+            ? Clamp01(v.M23RequiredFoods / (double)v.M23FoodCount)
+            : 0.0;
 
-        v.DCore = 12 * v.StepsNorm + 9 * v.SlackNorm + 4 * v.EndSlackNorm
-            + 6 * v.TightNorm + 5 * v.BufferNorm + 6 * v.TruncNorm
-            + 5 * v.DetourNorm + 3 * v.CorridorNorm + 2 * v.BranchNorm + 2 * v.OpenNorm
-            + 7 * v.MechNorm + 6 * v.GateNorm + 2 * v.LateNorm
-            + 5 * v.SizeNorm;
-        v.DRaw = v.DCore
-            + 9 * v.FaNorm + 4 * v.MisleadNorm + 5 * v.FunnelNorm
-            + 4 * v.NaiveNorm + 4 * v.EntropyNorm;
+        // v3 权重（总和 100）：未测指标不参与加权，不再用“未测=最难”的乐观回退。
+        v.DCore = 10 * v.StepsNorm + 8 * v.SlackNorm + 4 * v.EndSlackNorm
+            + 6 * v.TightNorm + 4 * v.BufferNorm + 6 * v.TruncNorm
+            + 5 * v.DetourNorm + 2 * v.CorridorNorm + 1 * v.BranchNorm + 1 * v.OpenNorm
+            + 9 * v.MechNorm + 5 * v.GateNorm + 2 * v.LateNorm + 2 * v.SizeNorm
+            + 6 * v.TimingNorm;
+        v.DRaw = v.DCore;
+        if (v.FalseAffordanceMeasured)
+        {
+            v.DRaw += 8 * v.FaNorm + 3 * v.MisleadNorm;
+        }
+        if (v.FunnelMeasured)
+        {
+            v.DRaw += 3 * v.FunnelNorm;
+        }
+        if (v.NaiveMeasured)
+        {
+            v.DRaw += 4 * v.NaiveNorm;
+        }
+        v.DRaw += 3 * v.EntropyNorm;
+        if (v.SolveStatesMeasured)
+        {
+            v.DRaw += 4 * v.SolveStatesNorm;
+        }
+        if (v.RequiredFoodMeasured)
+        {
+            v.DRaw += 4 * v.RequiredFoodNorm;
+        }
     }
 
     private static (int Count, int Gap, bool Estimated) ComputeFalseAffordance(
@@ -303,7 +431,7 @@ public static class MetricExtractor
             }
 
             LevelSpec without = CloneSpec(spec, food);
-            solver ??= new Search.ExactBfsSolver();
+            solver ??= Solver();
             state.ResetToSpec(without);
             Godot.Collections.Dictionary result = solver.Solve(state, solveBudget);
             string status = result["status"].AsString();
@@ -579,6 +707,20 @@ public sealed class MetricVector
     public double M17NaiveFailRate;
     public double M18ChoiceEntropy;
     public int M19Size;
+    /// <summary>机关覆盖路线格的最小时间余量（覆盖步×间隔 − 玩家到达步）；-1 = 无覆盖。</summary>
+    public int M20TimingMargin = -1;
+    public int M20CoveredSteps;
+    /// <summary>精确 BFS 求解状态数（搜索复杂度）。</summary>
+    public int M21SolveStates;
+    /// <summary>必需花瓣数 / 计入的花瓣数。</summary>
+    public int M23RequiredFoods;
+    public int M23FoodCount;
+
+    public bool FalseAffordanceMeasured;
+    public bool FunnelMeasured;
+    public bool NaiveMeasured;
+    public bool SolveStatesMeasured;
+    public bool RequiredFoodMeasured;
 
     public double StepsNorm;
     public double SlackNorm;
@@ -599,6 +741,9 @@ public sealed class MetricVector
     public double NaiveNorm;
     public double EntropyNorm;
     public double SizeNorm;
+    public double TimingNorm;
+    public double SolveStatesNorm;
+    public double RequiredFoodNorm;
 
     public double DCore;
     public double DRaw;
@@ -627,6 +772,11 @@ public sealed class MetricVector
             ["naive_fail_rate"] = M17NaiveFailRate,
             ["choice_entropy"] = M18ChoiceEntropy,
             ["size"] = M19Size,
+            ["timing_margin"] = M20TimingMargin,
+            ["covered_steps"] = M20CoveredSteps,
+            ["solve_states"] = M21SolveStates,
+            ["required_foods"] = M23RequiredFoods,
+            ["food_count"] = M23FoodCount,
             ["d_core"] = DCore,
             ["d_raw"] = DRaw,
             ["c_estimated"] = CEstimated ? 1 : 0,

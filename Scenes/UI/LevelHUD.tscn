@@ -78,10 +78,10 @@ mouse_filter = 2
 
 [node name="HBoxContainer" type="HBoxContainer" parent="Root/TopArea" unique_id=27681162]
 layout_mode = 0
-offset_left = 25.0
-offset_top = 48.0
-offset_right = 640.0
-offset_bottom = 128.0
+offset_left = 23.0
+offset_top = 9.0
+offset_right = 851.0
+offset_bottom = 89.0
 
 [node name="Label" type="Label" parent="Root/TopArea/HBoxContainer" unique_id=1633810609]
 custom_minimum_size = Vector2(160, 76)
@@ -171,10 +171,10 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -348.0
-offset_top = 58.0
-offset_right = -20.0
-offset_bottom = 116.0
+offset_left = -350.0
+offset_top = 19.0
+offset_right = -22.0
+offset_bottom = 84.0
 grow_horizontal = 0
 mouse_filter = 1
 theme_type_variation = &"SoftPanel"
@@ -196,6 +196,7 @@ text = "选关"
 script = ExtResource("4_button")
 
 [node name="LevelTitle" type="Label" parent="Root/TopArea" unique_id=1229292185]
+visible = false
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -361,4 +362,51 @@ custom_minimum_size = Vector2(200, 54)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "退出"
+script = ExtResource("4_button")
+
+[node name="TagList" type="Label" parent="Root" unique_id=216658126]
+visible = false
+layout_mode = 1
+anchors_preset = 0
+offset_left = 18.0
+offset_top = 140.0
+offset_right = 340.0
+offset_bottom = 520.0
+theme_override_colors/font_color = Color(1, 1, 1, 0.95)
+theme_override_colors/font_outline_color = Color(0.188, 0.4, 0.278, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = ""
+
+[node name="DifficultyLabel" type="Label" parent="Root" unique_id=216658125]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -394.0
+offset_top = 92.0
+offset_right = -186.0
+offset_bottom = 138.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.188, 0.4, 0.278, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 22
+text = "难度 0 · 0 步"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="SeedBtn" type="Button" parent="Root" unique_id=216658124]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -174.0
+offset_top = 92.0
+offset_right = -26.0
+offset_bottom = 138.0
+grow_horizontal = 0
+text = "复制种子"
 script = ExtResource("4_button")

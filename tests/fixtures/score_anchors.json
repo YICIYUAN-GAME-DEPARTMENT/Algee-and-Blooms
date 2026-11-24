@@ -1,41 +1,41 @@
 {
-  "scoring_version": 2,
+  "scoring_version": 5,
   "anchors": [
     {
       "id": "A0",
       "name": "空场直达",
       "d_raw": 0.0,
-      "score": 5
+      "score": 7
     },
     {
       "id": "L1",
       "name": "Level_01_move",
-      "d_raw": 20.627020287757407,
-      "score": 5
+      "d_raw": 10.693,
+      "score": 18
     },
     {
       "id": "L2",
       "name": "Level_02_petals",
-      "d_raw": 42.62791297018966,
-      "score": 10
+      "d_raw": 19.0357,
+      "score": 26
     },
     {
       "id": "L3",
       "name": "Level_03_obstacles",
-      "d_raw": 47.055281897558594,
-      "score": 25
+      "d_raw": 38.1363,
+      "score": 45
     },
     {
       "id": "L4",
       "name": "Level_04_GrowingFlowers",
-      "d_raw": 47.26505790890608,
-      "score": 45
+      "d_raw": 40.4512,
+      "score": 47
     },
     {
       "id": "L5",
       "name": "Level_05_CounterIt",
-      "d_raw": 60.499284371536646,
-      "score": 100
+      "d_raw": 50.543,
+      "score": 58
     }
   ]
 }
