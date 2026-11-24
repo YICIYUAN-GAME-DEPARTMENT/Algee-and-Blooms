@@ -7,6 +7,7 @@ func _initialize() -> void:
 	var samples := PackedByteArray()
 	samples.resize(int(RATE * DURATION) * 2)
 	var phase: float = 0.0
+	@warning_ignore("integer_division")
 	for i: int in range(samples.size() / 2):
 		var t: float = float(i) / RATE
 		var frequency: float = 360.0 + 500.0 * exp(-t * 45.0) + 75.0 * sin(t * 95.0) * exp(-t * 16.0)

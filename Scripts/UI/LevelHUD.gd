@@ -88,9 +88,9 @@ func set_growth_countdown(steps_left: int) -> void:
 
 
 ## 本关无机关时隐藏整个计数项
-func set_growth_visible(show: bool) -> void:
-	_grow_label.visible = show
-	_grow_card.visible = show
+func set_growth_visible(visible_now: bool) -> void:
+	_grow_label.visible = visible_now
+	_grow_card.visible = visible_now
 
 
 ## 顶栏关卡标题：第 N 关 · 关卡名（N = 场景 Level 根节点 level_id）
@@ -99,9 +99,9 @@ func set_level_title(title: String) -> void:
 
 
 ## 随机关卡：显示"复制种子"按钮并记录当前种子。
-func set_generated_seed(seed: int) -> void:
-	_generated_seed = seed
-	_seed_btn.visible = seed > 0
+func set_generated_seed(seed_value: int) -> void:
+	_generated_seed = seed_value
+	_seed_btn.visible = seed_value > 0
 	_seed_btn.text = "复制种子"
 
 

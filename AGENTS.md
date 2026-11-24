@@ -16,7 +16,7 @@
 2. **玩法定稿：** 玩法/规则已冻结（见功能需求文档 §4）。**涉及玩法/数值调整必须先与人类对齐**，确认后同步更新功能需求文档与 `Balance.tres` / 关卡场景，禁止在代码里"顺手"改规则。
 3. **不破坏扩展点：** Autoload 公共接口（见 [架构说明](docs/architecture/架构说明.md) §2）勿擅改；新增内容走 [开发文档](docs/开发文档.md) §2.3 扩展点。
 4. **最简可用、避免过度工程：** 原型/上线过渡期优先最小改动；占位资源允许，但须按开发文档 §3.7 命名并登记 §3.9。
-5. **GDScript 表现层 + C# 规则与算法（单一权威，已确认）：** 引擎接入 / 场景 / 动画 / UI / 输入 / 存档仍用 GDScript；**玩法规则与搜索 / 生成 / 评分统一由 C# 实现**（`Scripts/Algorithms/`，普通类 + `RefCounted`，不建独立类库 / CLI），`LevelState.gd` 退化为适配层，`Level.gd` 通过它调用 C# 规则。项目使用 Godot **.NET/mono** 构建，**放弃 Web 导出**；不引入其他第三方插件 / 原生扩展，除非人类确认并同步权威文档。测试全部在引擎内 headless 运行（C# 断言场景 + GUT 9.7.1，MIT）。2026-11-24 确认：规则单一权威在 C#，不再保留 GDScript 规则副本。
+5. **GDScript 表现层 + C# 规则与算法（单一权威，已确认）：** 引擎接入 / 场景 / 动画 / UI / 输入 / 存档仍用 GDScript；**玩法规则与搜索 / 生成 / 评分统一由 C# 实现**（`Scripts/Algorithms/`，普通类 + `RefCounted`，不建独立类库 / CLI），`LevelState.gd` 退化为适配层，`Level.gd` 通过它调用 C# 规则。项目使用 Godot **.NET/mono** 构建，**放弃 Web 导出**；不引入其他第三方插件 / 原生扩展，除非人类确认并同步权威文档。测试全部在引擎内 headless 运行（`tests/core/` C# 断言场景；当前未引入 GUT 等外部测试框架）。2026-11-24 确认：规则单一权威在 C#，不再保留 GDScript 规则副本。
 6. **本文档用途：** 本作是 2D 网格解谜（无卡牌 / 敌人 / 技能类玩法）；角色职责与索引均与仓库现状一致。
 
 ---
@@ -31,7 +31,7 @@
 | 引擎 / 语言 | Godot **4.7 stable**（.NET/mono，导出与 CI）+ **GDScript**（表现层）/ **C#**（规则与算法，单一权威，项目内 `Scripts/Algorithms/`）；不支持 Web 导出 |
 | 画面 / 平台 | 1280×720，`canvas_items` 拉伸，Forward+（Windows 渲染设备 d3d12）；目标 Windows 桌面 |
 | 架构 | 5 个 Autoload（GameManager / EventManager / SaveManager / ButtonAudio / SfxManager）+ `Level.gd`（表现）/ `LevelState.gd`（薄适配）/ `Scripts/Algorithms/`（C# 规则 + 搜索 + 生成，单一权威）/ `GridSystem`（场景网格数据）+ 实体预制 + 关卡场景直编 |
-| 测试 | 全部引擎内 headless：`tests/core/`（C# 断言场景）+ `tests/`（GUT 9.7.1，MIT） |
+| 测试 | 全部引擎内 headless：`tests/core/`（C# 断言场景）+ `tests/fixtures/`（黄金路线 / 锚点 / 基准快照） |
 | 项目阶段 | GameJam 已完成，进入正式上线准备；已确认 GDScript 表现层 + C# 规则单一权威并同步权威文档；里程碑见 [正式上线待办](docs/planning/正式上线待办.md)（**规划稿，非权威**） |
 | 权威设计文档 | [docs/开发文档.md](docs/开发文档.md)（工程 / 架构 / 数据 / 命名，权威）<br>[docs/design/功能需求文档.md](docs/design/功能需求文档.md)（玩法 / 数值 / 验收，权威） |
 | 实现说明 | [docs/architecture/架构说明.md](docs/architecture/架构说明.md)（随代码同步的实现细节） |
@@ -156,7 +156,7 @@
 | 模块 | 位置 | 职责 |
 | ---- | ---- | ---- |
 | Autoload | `Scripts/Autoload/` + `Scenes/UI/ButtonAudio.tscn` / `Scenes/Audio/SfxManager.tscn` | 顶层状态 / 信号总线 / 存档 / 按钮音 / 玩法音效 |
-| 规则层 | `Scripts/Systems/LevelState.gd` | 纯玩法规则（移动 / 截断 / 生长 / 死局），游戏与 `tools/LevelSolver` 共用；**改规则先改这里** |
+| 规则适配层 | `Scripts/Systems/LevelState.gd` | 转发 C# `RuleState` 并同步 trail / max_len / steps 等表现字段；规则唯一实现在 `Scripts/Algorithms/`，**改规则先改 C#** |
 | 表现层 | `Scripts/Systems/Level.gd` | 场景节点 / 动画 / HUD / 剧情 / 输入；只做表现同步，不另写一套规则 |
 | 网格数据 | `Scripts/Systems/GridSystem.gd` | 可走判定 / BFS（无物理碰撞） |
 | 剧情层 | `Scripts/Systems/DialogueOverlay.gd` + `Scenes/Dialogue/` | AVG 覆盖层（运行时懒实例） |
@@ -167,7 +167,7 @@
 | 关卡 | `Scenes/Levels/Level_<nn>_<名>.tscn` | **每关一个场景，直编**；`LevelTemplate.tscn` 为模板 |
 | 工具 | `tools/` | headless 生成 / 迁移 / 校验 / 求解器（`LevelSolver`），不参与游戏运行 |
 | 算法与规则 | `Scripts/Algorithms/`（C#） | 规则唯一实现 / 网格模型 / 搜索 / 生成 / 评分；不访问节点 / 场景 / 信号 |
-| 测试 | `tests/` + `addons/gut/` | 引擎内 headless：`tests/core/` C# 断言场景 + GUT 9.7.1（MIT） |
+| 测试 | `tests/` | 引擎内 headless：`tests/core/` C# 断言场景 + `tests/fixtures/` 快照；未引入 GUT 等外部框架 |
 | 美术 / 音频 | `Art/` / `Audio/` / `UI/` | 正式资源 + 占位；登记见开发文档 §3.9 |
 
 ---
@@ -201,13 +201,13 @@
 - 大资源走 Git LFS（`.gitattributes` 按扩展名追踪）；`.gd/.tscn/.tres/.cfg/.import` **永不入 LFS**。
 - 新增美术 / 音频登记开发文档 §3.9（A-xx）；`asset` / `art` 提交注明编号。
 - 引入外部代码 / 插件 / 美术 / 音频 / 字体前，先按 [research-first](docs/agents/skills/research-first.md) 核对许可证并取得人类确认；外部素材走 LFS 并登记 §3.9。
-- 第三方依赖：GUT 9.7.1（MIT，`addons/gut/`）已确认；Godot .NET/mono 运行时随引擎/导出模板；不引入 NuGet 包，除非核对许可证并登记。
+- 第三方依赖：Godot .NET/mono 运行时随引擎/导出模板；当前未引入 GUT 等测试插件；不引入 NuGet 包 / 插件，除非核对许可证并登记。
 - 占位资源按 §3.7 命名；正式替换后删除占位并更新登记。
 
 ### 5.4 测试与验收
 
 - 回归依据功能需求 §8（C-通用 / C-Lnn）与 §7 数值；发布前跑 §6.3 关卡校验。
-- 自动化测试全部在引擎内 headless 运行：C# 规则 / 求解器用 `tests/core/` 断言场景（退出码判定），GDScript 用 GUT（`addons/gut/`）；不再使用外部测试框架或离线差分工具。
+- 自动化测试全部在引擎内 headless 运行：C# 规则 / 求解器 / 生成器用 `tests/core/` 断言场景（退出码判定），快照存 `tests/fixtures/`；当前未引入 GUT 等外部测试框架，也不使用离线差分工具。
 - 规则迁移 / 大改必须保留「迁移前黄金路线快照」：5 关 `status/steps/route` 一致才算通过。
 - 玩法 / 手感 / 关卡体验验收由用户完成；AGENT 可按 qa.md 做规范检查、启动冒烟与 headless 工具验证（`--import`、`--check-only`、`tools/LevelSolver.tscn`），但**不代替用户判定验收通过**。
 - Output 面板的 warning / error 必须为 0；关卡可解性 / 最短路线以 `tools/LevelSolver` 的 SOLVABLE / UNSOLVABLE / UNKNOWN 输出为准。
@@ -259,3 +259,4 @@
 | 2026-11-24 | 算法核心改用 C#：独立类库 + Godot 桥接；切换 .NET/mono、放弃 Web 导出；替换 native/ 为 algorithms/ | 架构组 |
 | 2026-11-24 | 技术栈同步（正式上线）：确认 GDScript 引擎层 + Rust 算法核心、GUT 9.7.1 测试；补 native/ 模块、路由、角色与纪律 | 架构组 |
 | 2026-11-24 | 架构再定稿：规则单一权威迁入 C#（项目内 `Scripts/Algorithms/`），`LevelState.gd` 退化为适配层；取消独立 `.Core`/`.Cli` 与 xUnit，测试全部改为引擎内 headless（C# 断言场景 + GUT） | 架构组 |
+| 2026-11-25 | 文档同步现状：仓库未引入 GUT（无 `addons/gut/`），测试统一为 `tests/core/` C# 断言场景 + `tests/fixtures/`；修正 §4.4 规则层表述（`LevelState.gd` 为适配层，规则在 C#）；生成器样本关移至 `WIP/` | 架构组 |

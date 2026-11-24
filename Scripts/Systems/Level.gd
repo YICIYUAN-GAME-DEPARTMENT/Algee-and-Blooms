@@ -357,13 +357,13 @@ func _paint_auto(layer: TileMapLayer, cells: Array, frame: int = 0) -> void:
 		_paint_blob_auto(layer, cells)
 		return
 	layer.clear()
-	var set := {}
+	var cell_set := {}
 	for c: Vector2i in cells:
-		set[c] = true
+		cell_set[c] = true
 	for c: Vector2i in cells:
 		var mask := 0
 		for b in 4:
-			if set.has(c + CORNER_OFFS[b]):
+			if cell_set.has(c + CORNER_OFFS[b]):
 				mask |= 1 << b
 		layer.set_cell(c, TILE_SOURCE, Vector2i(mask, frame))
 
@@ -385,7 +385,9 @@ func _paint_blob_auto(layer: TileMapLayer, cells: Array) -> void:
 	if src == null:
 		return
 	# 建 mask→图集坐标 表：按纹理网格扫描每个瓦，读取其 terrain peering bit
+	@warning_ignore("integer_division")
 	var grid_w := (src.texture.get_width() + src.texture_region_size.x - 1) / src.texture_region_size.x
+	@warning_ignore("integer_division")
 	var grid_h := (src.texture.get_height() + src.texture_region_size.y - 1) / src.texture_region_size.y
 	var table := {}
 	for gy in grid_h:
@@ -401,13 +403,13 @@ func _paint_blob_auto(layer: TileMapLayer, cells: Array) -> void:
 				if td.get_terrain_peering_bit(BLOB_DIRS[b][1]) >= 0:
 					mask |= 1 << b
 			table[mask] = anchor
-	var set := {}
+	var cell_set := {}
 	for c: Vector2i in cells:
-		set[c] = true
+		cell_set[c] = true
 	for c: Vector2i in cells:
 		var raw := 0
 		for i in 8:
-			if set.has(c + BLOB_DIRS[i][0]):
+			if cell_set.has(c + BLOB_DIRS[i][0]):
 				raw |= 1 << i
 		var mask := _canonical_blob_mask(raw)
 		if table.has(mask):

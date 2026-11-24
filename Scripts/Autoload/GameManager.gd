@@ -313,11 +313,11 @@ func list_levels() -> Array[Dictionary]:
 				if ps != null:
 					var root := ps.instantiate()
 					var id := int(root.get("level_id")) if root.get("level_id") != null else 0
-					var name := str(root.get("level_name")) if root.get("level_name") != null else ""
+					var display_name := str(root.get("level_name")) if root.get("level_name") != null else ""
 					root.free()
-					if name.is_empty():
-						name = scene_name.get_basename().trim_prefix("Level_")
-					out.append({"id": id, "name": name, "path": path})
+					if display_name.is_empty():
+						display_name = scene_name.get_basename().trim_prefix("Level_")
+					out.append({"id": id, "name": display_name, "path": path})
 		fname = dir.get_next()
 	dir.list_dir_end()
 	out.sort_custom(func(a, b): return a.id < b.id)
