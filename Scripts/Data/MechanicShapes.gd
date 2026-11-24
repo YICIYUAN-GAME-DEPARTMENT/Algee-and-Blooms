@@ -2,23 +2,28 @@ class_name MechanicShapes
 ## ============================================================================
 ## MechanicShapes — 机关生长形状（逻辑权威，与功能需求文档 §4.2.1 一致）
 ## ----------------------------------------------------------------------------
-## 所有偏移均以机关中心格 C 为原点。中心恒占；lv 递增为嵌套扩张：
-##   lv0=1(仅C)  lv1=5(+十字)  lv2=9(3x3)  lv3=13(曼哈顿≤2)  lv4=21(5x5去4角)
+## 所有偏移均以机关中心格 C 为原点。形状统一写成八边形：
+##   r(lv) = floor((lv + 2) / 2)                    曼哈顿半径
+##   k(lv) = floor((lv + 1) / 2)                    切比雪夫半径
+##   S(lv) = { p : |p.x| + |p.y| ≤ r(lv)
+##                且 max(|p.x|, |p.y|) ≤ k(lv) }
+## 即"曼哈顿菱形 ∩ 切比雪夫方框"，面积序列 1/5/9/13/21。
+##
+## 反解出格子 p 首次进入形状的阶段（供 LevelState / 求解器 O(1) 查询）：
+##   cover_level(p) = max(0, 2(|x|+|y|) - 2, 2 max(|x|,|y|) - 1)
 ## ============================================================================
-
 
 ## 返回某阶段所有被占据格相对中心 C 的偏移（含中心本身）
 static func cells(level: int) -> Array[Vector2i]:
 	var out: Array[Vector2i] = [Vector2i.ZERO]
-	var chebyshev := _radius(level)
-	for x in range(-chebyshev, chebyshev + 1):
-		for y in range(-chebyshev, chebyshev + 1):
+	var r := radius(level).x
+	for x in range(-r, r + 1):
+		for y in range(-r, r + 1):
 			var d := Vector2i(x, y)
 			if d == Vector2i.ZERO:
 				continue
-			if not _in_shape(level, d):
-				continue
-			out.append(d)
+			if cover_level(d) <= level:
+				out.append(d)
 	return out
 
 
@@ -26,24 +31,14 @@ static func max_level() -> int:
 	return 4
 
 
-## 形状嵌套半径（曼哈顿基准用），lv0 特殊
-static func _radius(level: int) -> int:
-	match level:
-		0: return 0
-		1: return 1
-		2: return 1   # 3x3（切比雪夫1）
-		3: return 2   # 曼哈顿 ≤2 的 5x5 菱形
-		4: return 2   # 5x5 去 4 角
-		_: return 0
+## (r, k)：r = 曼哈顿半径，k = 切比雪夫半径；lv 超出 0..max 时钳制
+static func radius(level: int) -> Vector2i:
+	var lv := clampi(level, 0, max_level())
+	return Vector2i(floori((lv + 2) / 2.0), floori((lv + 1) / 2.0))
 
 
-static func _in_shape(level: int, d: Vector2i) -> bool:
-	var ax := absi(d.x)
-	var ay := absi(d.y)
-	match level:
-		0: return false
-		1: return ax + ay == 1
-		2: return ax <= 1 and ay <= 1
-		3: return ax + ay <= 2
-		4: return ax <= 2 and ay <= 2 and not (ax == 2 and ay == 2)
-	return false
+## 格子 d 第一次进入机关形状的阶段；> max_level() 表示永不覆盖
+static func cover_level(d: Vector2i) -> int:
+	var d1 := absi(d.x) + absi(d.y)
+	var dinf := maxi(absi(d.x), absi(d.y))
+	return maxi(0, maxi(2 * d1 - 2, 2 * dinf - 1))

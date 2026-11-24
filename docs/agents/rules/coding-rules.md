@@ -1,6 +1,6 @@
-# 编码规范（GDScript）
+# 编码规范（GDScript / C#）
 
-> 适用对象：所有 `Scripts/**/*.gd`。AI 智能体与人类成员均须遵守。
+> 适用对象：所有 `Scripts/**/*.gd` 与 `Scripts/Algorithms/**/*.cs`。AI 智能体与人类成员均须遵守。
 > 工程结构与命名规则见 [开发文档（权威）](../../开发文档.md)；玩法数值见 [功能需求文档（权威）](../../design/功能需求文档.md)。
 
 ## 1. 文件与类
@@ -61,8 +61,20 @@
 - TODO 格式：`# TODO(角色): 描述`，如 `# TODO(qa): 补 C-07 回归用例`。
 
 ## 12. 禁止
-- ❌ 混入 C# / 第三方插件（除非人类明确同意）
+- ❌ 在 `Scripts/Algorithms/` 之外混入 C#；C# 仅限算法层（规则 / 搜索 / 生成 / 评分唯一权威）
+- ❌ 第三方插件 / NuGet 包（除非人类明确同意并登记开发文档 §3.9）
 - ❌ `print()` 进生产代码（用 `push_warning/push_error`）
 - ❌ 在 Autoload 公共接口上擅自改签名
 - ❌ 未经人类确认擅自修改已冻结玩法规则（改需走功能需求文档）
 - ❌ 关卡布局 / 机关形状硬编码进脚本
+
+## 13. C#（算法层）
+
+> 适用范围：`Scripts/Algorithms/**/*.cs`。玩法规则唯一实现为 `RuleState`；生成 / 搜索 / 评分不得访问节点、场景、信号。
+
+- **命名空间**：`Growth.Algorithms`（子目录追加 `Generation` / `Search` / `Scoring`）；类用 `sealed class`，数据契约用 public 属性。
+- **命名**：类 / 方法 / 公共成员 PascalCase，私有字段 `_camelCase`；文件与主类同名。
+- **热路径**：只用纯 C# 类型（`Cell` / `List<Cell>` / `Span`），结束才转 `Godot.Collections`；禁止在生成 / 求解热路径 `new Dictionary`。
+- **数据契约**：统一 `System.Text.Json` + `SnakeCaseLower`，`Cell` 用 `[x, y]`；新增字段必须保证旧 JSON 可反序列化。
+- **降级**：算法异常 / 超预算必须降级（返回存档最优 / `UNKNOWN`），不得崩溃游戏；生成路线必须经 `RuleState` 重放校验。
+- **依赖**：不引入 NuGet 包；C# 提交根 `.csproj`，`bin/obj` 不入库。

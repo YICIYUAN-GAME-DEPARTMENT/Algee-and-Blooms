@@ -17,7 +17,7 @@ config/name_localized={
 config/description="2026 GameJam project — theme: Grow. 2D grid puzzle (Godot 4.7 + GDScript)."
 config/version="0.11"
 run/main_scene="res://Scenes/UI/MainMenu.tscn"
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 config/icon="uid://cee85f84ttd1e"
 
 [autoload]

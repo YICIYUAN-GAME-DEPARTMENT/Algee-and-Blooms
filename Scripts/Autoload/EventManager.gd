@@ -10,12 +10,22 @@ extends Node
 ## ============================================================================
 
 # ── Gameplay（权威，见架构说明 §3）────────────────────────────
+# 信号由外部脚本 emit，分析器的 unused_signal 属误报，逐条忽略。
+@warning_ignore("unused_signal")
 signal level_loaded(level_id: int)
+@warning_ignore("unused_signal")
 signal player_moved(head: Vector2i)          # 每次有效移动/截断
+@warning_ignore("unused_signal")
 signal max_length_changed(new_max: int)       # L 变化
+@warning_ignore("unused_signal")
 signal move_count_changed(count: int)         # 步数变化
+@warning_ignore("unused_signal")
 signal food_eaten(pos: Vector2i)
+@warning_ignore("unused_signal")
 signal mechanism_grew(new_level: int)         # 全体机关 +1 后的阶段
+@warning_ignore("unused_signal")
 signal input_locked(locked: bool)             # 机关生长动画期间
+@warning_ignore("unused_signal")
 signal level_cleared(level_id: int, steps: int)
+@warning_ignore("unused_signal")
 signal level_failed(level_id: int)

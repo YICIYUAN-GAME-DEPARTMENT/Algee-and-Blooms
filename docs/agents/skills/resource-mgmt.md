@@ -24,4 +24,4 @@
 1. 复制 `Scenes/Levels/LevelTemplate.tscn` → `Scenes/Levels/Level_02_X.tscn`。
 2. 打开场景：改根节点导出 `level_id`/`level_name`/`map_size`。
 3. 在 `Ground`/`Obstacles` 层涂格（地图范围=涂格包围盒），拖入/复制实体节点（PlayerSpawn/Goal/Food/Mechanism）并吸附到格子上。
-4. 用功能需求 §6.3 / §8 校验（BFS 可走、食物链可达）。
+4. 可先用 `tools/LevelSolver.tscn` 校验可解性 / 最短路线，再按功能需求 §6.3 / §8 验收（BFS 可走、食物链可达）。

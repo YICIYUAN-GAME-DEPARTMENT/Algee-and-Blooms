@@ -158,6 +158,70 @@ theme_type_variation = &"PrimaryButton"
 text = "开始游戏"
 script = ExtResource("4_button")
 
+[node name="RandomButton" type="Button" parent="MenuFrame/Margin/Content" unique_id=1316976108]
+custom_minimum_size = Vector2(300, 60)
+layout_mode = 2
+text = "随机关卡"
+script = ExtResource("4_button")
+
+[node name="TierRow" type="HBoxContainer" parent="MenuFrame/Margin/Content" unique_id=1316976112]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TierLabel" type="Label" parent="MenuFrame/Margin/Content/TierRow" unique_id=1316976113]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+text = "难度"
+vertical_alignment = 1
+
+[node name="TierOption" type="OptionButton" parent="MenuFrame/Margin/Content/TierRow" unique_id=1316976114]
+custom_minimum_size = Vector2(232, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ModelRow" type="HBoxContainer" parent="MenuFrame/Margin/Content"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ModelLabel" type="Label" parent="MenuFrame/Margin/Content/ModelRow"]
+custom_minimum_size = Vector2(30, 0)
+layout_mode = 2
+text = "障碍"
+vertical_alignment = 1
+
+[node name="ModelOption" type="OptionButton" parent="MenuFrame/Margin/Content/ModelRow"]
+custom_minimum_size = Vector2(104, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="GenLabel" type="Label" parent="MenuFrame/Margin/Content/ModelRow"]
+custom_minimum_size = Vector2(30, 0)
+layout_mode = 2
+text = "生成"
+vertical_alignment = 1
+
+[node name="GeneratorOption" type="OptionButton" parent="MenuFrame/Margin/Content/ModelRow"]
+custom_minimum_size = Vector2(104, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SeedRow" type="HBoxContainer" parent="MenuFrame/Margin/Content" unique_id=1316976109]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SeedInput" type="LineEdit" parent="MenuFrame/Margin/Content/SeedRow" unique_id=1316976110]
+custom_minimum_size = Vector2(170, 46)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "输入种子"
+max_length = 10
+
+[node name="SeedStartButton" type="Button" parent="MenuFrame/Margin/Content/SeedRow" unique_id=1316976111]
+custom_minimum_size = Vector2(122, 46)
+layout_mode = 2
+text = "按种子开始"
+script = ExtResource("4_button")
+
 [node name="SettingsButton" type="Button" parent="MenuFrame/Margin/Content" unique_id=1616432765]
 visible = false
 custom_minimum_size = Vector2(300, 60)

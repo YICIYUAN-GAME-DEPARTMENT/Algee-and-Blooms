@@ -40,12 +40,8 @@ extends Node2D
 ## 失败剧情：判负后先播，播完再弹失败面板
 @export_file("*.json") var story_fail: String = ""
 
-## 逻辑
-var trail: Array[Vector2i] = []
-var max_len: int = 3
-var steps := 0
-var food_eaten := 0
-var total_food := 0
+## 纯规则状态（游戏与离线求解器共用；表现层只读 trail/steps 等派生值）
+var state: LevelState = LevelState.new()
 var input_locked := false
 var finished := false
 ## 开场剧情播放中：锁方向键输入（R 重开始终可用）
@@ -59,13 +55,19 @@ var _mechanisms: Array = []
 var _foods: Array = []
 var _goal: Goal = null
 var _spawn: PlayerSpawn = null
-var _head_cell := Vector2i.ZERO
 ## 剧情覆盖层（运行时懒实例化的 DialogueOverlay）
 var _dialogue: DialogueOverlay = null
-## 本关机关生长周期（_place_player 时解析 override/全局）
-var _growth_interval := 6
-## 本关每片花瓣（食物）提供的身长增量（_place_player 时解析 override/全局）
-var _food_len_gain := 2
+
+## 表现层只读别名（权威数据在 state）
+var trail: Array[Vector2i]:
+	get:
+		return state.trail
+var max_len: int:
+	get:
+		return state.max_len
+var steps: int:
+	get:
+		return state.steps
 
 ## 头部动画状态：方向行（0=E 1=W 2=S 3=N）与帧列（0/1=移动两帧序列 2=停留）
 var _head_dir_row := 0
@@ -132,6 +134,14 @@ const HEAD_FRAME_HOLD_SEC := 0.18
 ## 剧情覆盖层场景（运行时按需实例，场景树见 Scenes/Dialogue/DialogueOverlay.tscn）
 const DIALOGUE_SCENE_PATH := "res://Scenes/Dialogue/DialogueOverlay.tscn"
 
+const PLAYER_SPAWN_SCENE := preload("res://Scenes/Entities/PlayerSpawn.tscn")
+const GOAL_SCENE := preload("res://Scenes/Entities/Goal.tscn")
+const FOOD_SCENE := preload("res://Scenes/Entities/Food.tscn")
+const MECH_SCENE := preload("res://Scenes/Entities/Mechanism.tscn")
+
+## 随机关卡（S7）：GameManager 注入 LevelSpec 后，运行时重建地板/实体；手编关卡恒为 false。
+var generated_active := false
+
 @onready var _ground: TileMapLayer = $World/Ground
 @onready var _obstacles: TileMapLayer = $World/Obstacles
 @onready var _mech_cells: TileMapLayer = $World/MechanismCells
@@ -145,18 +155,16 @@ const DIALOGUE_SCENE_PATH := "res://Scenes/Dialogue/DialogueOverlay.tscn"
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
+	generated_active = GameManager.generated_mode and not GameManager.generated_spec_json.is_empty()
+	if generated_active:
+		_build_generated_board()
 	_collect_entities()
 	_compute_board_rect()
 	grid.setup(_board_origin, _board_size)
-	for m in _mechanisms:
-		m.set_grid_bounds(_board_origin, _board_size)
 	_fill_ground_fallback()
 	# 阻挡墙 blob47（TerrainWall.tres 就地换源为 47 blob 图集）：用实际涂格几何
 	# 确定性重涂贴边，旧场景里按 4 角掩码存的瓦片坐标运行时自动换成 blob 列号
 	_resync_obstacle_blob()
-	# 地板=可走区：机关只在地板格上占位（_fill_ground_fallback 内已灌入 grid.floor_cells）
-	for m in _mechanisms:
-		m.set_floor_cells(grid.floor_cells)
 	_place_player()
 	# PlayerFx 容器在场景里可能被作者隐藏（编辑器不挡眼）；运行时必须打开，
 	# 否则 Head/Tail 各自 visible=true 也不会渲染（父节点不可见）。
@@ -164,9 +172,24 @@ func _ready() -> void:
 	# LevelHUD 同理：作者可能整层隐藏便于编辑；运行时必须显示，否则顶栏/
 	# 结算面板/暂停菜单全部不可见（剧情播完后"弹不出胜利/失败界面"的根因之一）。
 	_hud.visible = true
-	_hud.set_level_title("第 %d 关 · %s" % [level_id, level_name])
+	if generated_active:
+		_hud.set_difficulty(GameManager.generated_score, GameManager.generated_steps,
+				GameManager.generated_model_label(), GameManager.generated_generator_label(),
+				GameManager.generated_score_tier_label())
+		_hud.set_generated_seed(GameManager.generated_seed)
+		_hud.set_tags(GameManager.generated_tags)
+		_fit_camera_to_generated_board()
+	else:
+		_hud.set_level_title("第 %d 关 · %s" % [level_id, level_name])
+		_hud.set_tags([])
 	_set_head_anchor()
 	_sync_player_layer()
+	if generated_active:
+		var cam := get_node_or_null("Cam") as Camera2D
+		var zoom_value := cam.zoom.x if cam != null else 1.0
+		print("[GeneratedLevel] board=%s origin=%s floor=%d foods=%d mechs=%d L0=%d trail=%d goal=%s zoom=%.2f" % [
+			_board_size, _board_origin, grid.floor_cells.size(), _foods.size(), _mechanisms.size(),
+			state.max_len, state.trail.size(), state.goal_cell, zoom_value])
 	EventManager.level_loaded.emit(level_id)
 	# 开场剧情：先播完再解锁操作（await 期间场景可能被 R 重开，需判存活）
 	if not story_start.is_empty():
@@ -174,7 +197,12 @@ func _ready() -> void:
 		await _play_story(story_start)
 		_story_active = false
 	if is_inside_tree():
-		_check_deadlock()
+		if state.head == state.goal_cell:
+			_win()
+		else:
+			var msg := state.check_deadlock()
+			if not msg.is_empty():
+				_fail(msg)
 
 
 # ── 实体收集（递归，任意层级都行）────────────────────────────────
@@ -186,7 +214,6 @@ func _scan(node: Node) -> void:
 	for child in node.get_children():
 		if child is Food:
 			_foods.append(child as Food)
-			total_food += 1
 		elif child is Goal:
 			_goal = child as Goal
 		elif child is PlayerSpawn:
@@ -197,9 +224,103 @@ func _scan(node: Node) -> void:
 			_scan(child)
 
 
+## 随机关卡（S7）：按 LevelSpec 重建图层与实体；场景里预置的模板内容全部清掉。
+func _build_generated_board() -> void:
+	var parsed: Variant = JSON.parse_string(GameManager.generated_spec_json)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("Level: 随机关卡 spec 解析失败，退回模板布局")
+		generated_active = false
+		return
+	var spec: Dictionary = parsed
+	level_id = 0
+	level_name = "随机关卡"
+	map_size = Vector2i(int(spec.get("width", 12)), int(spec.get("height", 12)))
+
+	_ground.clear()
+	_obstacles.clear()
+	_mech_cells.clear()
+	_player_cells.clear()
+	var entity_root: Node2D = $World/EntityRoot
+	for child in entity_root.get_children():
+		entity_root.remove_child(child)
+		child.queue_free()
+
+	var floor_cells: Array = []
+	for raw in spec.get("floor", []):
+		floor_cells.append(_cell_from_array(raw))
+	if not floor_cells.is_empty():
+		_paint_auto(_ground, floor_cells)
+	var obstacle_cells: Array = []
+	for raw in spec.get("obstacles", []):
+		obstacle_cells.append(_cell_from_array(raw))
+	if not obstacle_cells.is_empty():
+		_paint_auto(_obstacles, obstacle_cells)
+
+	_instance_generated_entity(PLAYER_SPAWN_SCENE, _cell_from_array(spec.get("spawn", [0, 0])), entity_root)
+	_instance_generated_entity(GOAL_SCENE, _cell_from_array(spec.get("goal", [0, 0])), entity_root)
+	for raw in spec.get("foods", []):
+		_instance_generated_entity(FOOD_SCENE, _cell_from_array(raw), entity_root)
+	var mech_levels: Array = spec.get("mech_initial_levels", [])
+	var mech_index := 0
+	for raw in spec.get("mech_centers", []):
+		var mech: Node2D = _instance_generated_entity(MECH_SCENE, _cell_from_array(raw), entity_root)
+		var level := int(mech_levels[mech_index]) if mech_index < mech_levels.size() else 0
+		mech.set("initial_level", level)
+		mech_index += 1
+
+	initial_max_len_override = int(spec.get("initial_max_len", 0))
+	food_len_gain_override = int(spec.get("food_len_gain", 0))
+	mechanism_max_level_override = int(spec.get("mechanism_cap", 0))
+	growth_step_interval_override = int(spec.get("growth_interval", 0))
+	story_start = ""
+	story_win = ""
+	story_fail = ""
+
+
+func _instance_generated_entity(scene: PackedScene, cell: Vector2i, parent: Node) -> Node2D:
+	var node: Node2D = scene.instantiate()
+	node.set("cell", cell)  # add_child 之前设置，_ready 会按格中心摆放
+	parent.add_child(node)
+	return node
+
+
+static func _cell_from_array(raw: Variant) -> Vector2i:
+	if typeof(raw) == TYPE_ARRAY and raw.size() >= 2:
+		return Vector2i(int(raw[0]), int(raw[1]))
+	return Vector2i.ZERO
+
+
+## 随机关卡相机：按棋盘包围盒居中缩放（仅生成模式；手编关卡仍由作者摆放）。
+func _fit_camera_to_generated_board() -> void:
+	var cam := get_node_or_null("Cam") as Camera2D
+	if cam == null:
+		return
+	var board_px := Vector2(_board_size) * GridMetrics.CELL_PX
+	if board_px.x <= 0.0 or board_px.y <= 0.0:
+		return
+	var view := Vector2(1280, 720)
+	var vp := get_viewport()
+	if vp != null:
+		view = vp.get_visible_rect().size
+	var margin := 1.25
+	var fit := minf(1.0, minf(view.x / (board_px.x * margin), view.y / (board_px.y * margin)))
+	cam.zoom = Vector2(fit, fit)
+	cam.position = Vector2(_board_origin) * GridMetrics.CELL_PX + board_px * 0.5
+	cam.make_current()
+
+	# 背景跟随相机：按可见世界范围放大并居中，避免棋盘外围露出未覆盖区域。
+	var bg := get_node_or_null("World/Bg") as Sprite2D
+	if bg != null and bg.texture != null:
+		var visible_world := view / maxf(fit, 0.01)
+		var cover := Vector2(maxf(visible_world.x, board_px.x * margin),
+				maxf(visible_world.y, board_px.y * margin))
+		bg.scale = Vector2(cover.x / bg.texture.get_width(), cover.y / bg.texture.get_height())
+		bg.position = cam.position
+
+
 ## 自动地图范围 = Ground/Obstacles 涂格 + 实体格（Spawn/Goal/Food/Mechanism 核心）的外接矩形。
 ## 完全空白时退回 map_size 默认区（0,0 起）。
-## 机关生长体只在"已涂地板范围"内生长；越界格会被 Mechanism.claim_missing 跳过（不铺新地板）。
+## 机关生长体只在"已涂地板范围"内生长；越界格由 LevelState 的覆盖时刻表跳过（不铺新地板）。
 func _compute_board_rect() -> void:
 	var cells: Array[Vector2i] = []
 	for c in _ground.get_used_cells():
@@ -236,13 +357,13 @@ func _paint_auto(layer: TileMapLayer, cells: Array, frame: int = 0) -> void:
 		_paint_blob_auto(layer, cells)
 		return
 	layer.clear()
-	var set := {}
+	var cell_set := {}
 	for c: Vector2i in cells:
-		set[c] = true
+		cell_set[c] = true
 	for c: Vector2i in cells:
 		var mask := 0
 		for b in 4:
-			if set.has(c + CORNER_OFFS[b]):
+			if cell_set.has(c + CORNER_OFFS[b]):
 				mask |= 1 << b
 		layer.set_cell(c, TILE_SOURCE, Vector2i(mask, frame))
 
@@ -264,7 +385,9 @@ func _paint_blob_auto(layer: TileMapLayer, cells: Array) -> void:
 	if src == null:
 		return
 	# 建 mask→图集坐标 表：按纹理网格扫描每个瓦，读取其 terrain peering bit
+	@warning_ignore("integer_division")
 	var grid_w := (src.texture.get_width() + src.texture_region_size.x - 1) / src.texture_region_size.x
+	@warning_ignore("integer_division")
 	var grid_h := (src.texture.get_height() + src.texture_region_size.y - 1) / src.texture_region_size.y
 	var table := {}
 	for gy in grid_h:
@@ -280,13 +403,13 @@ func _paint_blob_auto(layer: TileMapLayer, cells: Array) -> void:
 				if td.get_terrain_peering_bit(BLOB_DIRS[b][1]) >= 0:
 					mask |= 1 << b
 			table[mask] = anchor
-	var set := {}
+	var cell_set := {}
 	for c: Vector2i in cells:
-		set[c] = true
+		cell_set[c] = true
 	for c: Vector2i in cells:
 		var raw := 0
 		for i in 8:
-			if set.has(c + BLOB_DIRS[i][0]):
+			if cell_set.has(c + BLOB_DIRS[i][0]):
 				raw |= 1 << i
 		var mask := _canonical_blob_mask(raw)
 		if table.has(mask):
@@ -363,70 +486,29 @@ func _place_player() -> void:
 		push_error("Level %d: 需要 PlayerSpawn 与 Goal" % level_id)
 		return
 	grid.goal_cell = _goal.cell
-	trail = [_spawn.cell]
-	_head_cell = _spawn.cell
-	max_len = _resolve(initial_max_len_override, GameManager.balance.initial_max_len)
-	_growth_interval = _resolve(growth_step_interval_override, GameManager.balance.growth_step_interval)
-	_food_len_gain = _resolve(food_len_gain_override, GameManager.balance.food_len_gain)
-	steps = 0
-	food_eaten = 0
-	finished = false
 	_spawn.visible = false  # 出生点标识由玩家身体覆盖
-	# 机关本关最高阶段（在首次占格前注入）
-	var cap := _resolve(mechanism_max_level_override, GameManager.balance.mechanism_max_level)
+	finished = false
+	input_locked = false
+
+	var foods: Array[Vector2i] = []
+	for f in _foods:
+		foods.append(f.cell)
+	var centers: Array[Vector2i] = []
+	var initial_levels: Array[int] = []
 	for m in _mechanisms:
-		m.set_level_cap(cap)
-	var added := _claim_initial_mechanisms()
-	_hud.set_growth_visible(not _mechanisms.is_empty())
+		centers.append(m.cell)
+		initial_levels.append(m.initial_level)
+
+	var cap := _resolve(mechanism_max_level_override, GameManager.balance.mechanism_max_level)
+	var l0 := _resolve(initial_max_len_override, GameManager.balance.initial_max_len)
+	var interval := _resolve(growth_step_interval_override, GameManager.balance.growth_step_interval)
+	var gain := _resolve(food_len_gain_override, GameManager.balance.food_len_gain)
+	state.setup(grid, _spawn.cell, _goal.cell, foods, centers, initial_levels, l0, interval, gain, cap)
+	var added := state.start()
+	_hud.set_growth_visible(state.has_mechanisms())
 	_update_hud()
 	_sync_mech_layer()
 	_pop_mech_cells(added)  # 范围初建同样播一次出场动画
-
-
-# ── 机关占格（身体/保护格挡住→跳过；lv 照升，下次生长重试）────────
-func _blocked_cells() -> Dictionary:
-	var blocked := {}
-	for c in trail:
-		blocked[c] = true
-	if _spawn: blocked[_spawn.cell] = true
-	if _goal: blocked[_goal.cell] = true
-	return blocked
-
-
-## 首次占格：把 shape(level) 中未占的格加入 claimed。返回本次新增占格
-## （= 范围初建"更新的部分"，供出场动画播放）。
-func _claim_initial_mechanisms() -> Array:
-	var blocked := _blocked_cells()
-	var added: Array = []
-	for m in _mechanisms:
-		m.claim_missing(blocked)
-		for c in m.claimed:
-			added.append(c)
-	_rebuild_mech_grid()
-	return added
-
-
-## 机关生长：未满级则 +1 阶段；满级后每次生长仍刷新——把此前被玩家身体
-## 挡住、现已空出的 shape 格补齐（阶段维持在本关最高 level_cap）。
-## 新增占格 = "范围更新的部分"，同步铺瓦后播一次出场动画。
-func _grow_all_mechanisms() -> void:
-	var before := {}
-	for m in _mechanisms:
-		for c in m.claimed:
-			before[c] = true
-	var blocked := _blocked_cells()
-	for m in _mechanisms:
-		if m.level < m.level_cap:
-			m.set_level(m.level + 1)
-		m.claim_missing(blocked)
-	var added: Array = []
-	for m in _mechanisms:
-		for c in m.claimed:
-			if not before.has(c):
-				added.append(c)
-	_sync_mech_layer()
-	_rebuild_mech_grid()
-	_pop_mech_cells(added)
 
 
 ## 出场动画：新增占格按 3 帧行（0=冒出 1=生长中 2=完成）随 grow_anim_sec
@@ -452,24 +534,12 @@ func _set_mech_frame(cells: Array, frame: int) -> void:
 		_mech_cells.set_cell(c, TILE_SOURCE, Vector2i(cur.x, frame))
 
 
-## 把机关实际占格写入 grid.mech_cells（BFS/可走判定用），含核心格
-func _rebuild_mech_grid() -> void:
-	grid.mech_cells.clear()
-	for m in _mechanisms:
-		for cell in m.claimed:
-			if grid.in_bounds(cell):
-				grid.mech_cells[cell] = true
-
-
 ## 把机关实际占格（含核心格）画到 MechanismCells 层（确定性贴边）。
 ## 统一铺在完成帧（MECH_FRAME_DONE）——新增格由 _pop_mech_cells 覆盖播放
 ## 出场动画。核心格同样铺瓦：贴边掩码天然把核心算作生长体的一部分，核心与
 ## 生长体相邻角点不缺瓦；核心外观由 Core Sprite（z_index=1）浮在瓦片上层绘制。
 func _sync_mech_layer() -> void:
-	var cells: Array = []
-	for m in _mechanisms:
-		for cell: Vector2i in m.claimed:
-			cells.append(cell)
+	var cells: Array = state.get_claimed_cells()
 	if cells.is_empty():
 		_mech_cells.clear()
 		return
@@ -619,58 +689,37 @@ func _action_for(d: Vector2i) -> String:
 	return ""
 
 
-## 一次走格。成功移动/截断算 1 步；无效移动不计步。
-## 权威：身体 trail 长度 ≤ L（硬上限），禁止超长前进。
+## 一次走格：规则交给 LevelState；表现层据此同步玩家/机关/HUD/结算。
 func _step(dir: Vector2i) -> void:
-	var nxt := _head_cell + dir
-	if not grid.in_bounds(nxt):
+	var res := state.step(dir)
+	if not res.accepted:
 		return
-	# 情况 B：踏入自己身体 → 截断到该格
-	if trail.has(nxt):
-		trail = trail.slice(0, trail.find(nxt) + 1)
-		_head_cell = nxt
-		steps += 1
-		_after_action()
-		return
-	# 情况 A：可走格（障碍/机关占格不可入）
-	if not grid.can_step_into(nxt):
-		return
-	if trail.size() >= max_len:
-		return   # 身长硬上限：不可再向前进空格
-	trail.append(nxt)
-	_head_cell = nxt
-	_consume_food_at(nxt)
-	steps += 1
-	_after_action()
-	if nxt == grid.goal_cell:
+	if res.ate_food:
+		_remove_food_node(res.food_cell)
+		EventManager.max_length_changed.emit(state.max_len)
+		EventManager.food_eaten.emit(res.food_cell)
+	_advance_head_walk()  # 头部移动两帧循环 + 停留计时
+	EventManager.player_moved.emit(state.head)
+	EventManager.move_count_changed.emit(state.steps)
+	_sync_player_layer()
+	_update_hud()
+	if res.grew:
+		_growth_sequence(res)
+	if res.won:
 		_win()
+	elif not res.grew and not res.deadlock_msg.is_empty():
+		_fail(res.deadlock_msg)
 
 
-func _consume_food_at(cell: Vector2i) -> void:
+func _remove_food_node(cell: Vector2i) -> void:
 	for f in _foods:
 		if f.cell == cell:
 			_foods.erase(f)
 			f.queue_free()
-			food_eaten += 1
-			max_len += _food_len_gain
-			EventManager.max_length_changed.emit(max_len)
-			EventManager.food_eaten.emit(cell)
 			return
 
 
-func _after_action() -> void:
-	_advance_head_walk()  # 头部移动两帧循环 + 停留计时
-	EventManager.player_moved.emit(_head_cell)
-	EventManager.move_count_changed.emit(steps)
-	_sync_player_layer()
-	_update_hud()
-	if steps > 0 and steps % _growth_interval == 0:
-		_growth_sequence()
-	else:
-		_check_deadlock()
-
-
-func _growth_sequence() -> void:
+func _growth_sequence(res: LevelState.StepResult) -> void:
 	input_locked = true
 	EventManager.input_locked.emit(true)
 	var dur := GameManager.balance.grow_anim_sec
@@ -679,55 +728,22 @@ func _growth_sequence() -> void:
 		m.scale = Vector2.ONE
 		t.tween_property(m, "scale", Vector2(1.18, 1.18), dur * 0.4)
 		t.tween_property(m, "scale", Vector2.ONE, dur * 0.6)
-	_grow_all_mechanisms()
-	EventManager.mechanism_grew.emit(_current_mech_level())
+	_sync_mech_layer()
+	_pop_mech_cells(res.added_mech_cells)
+	EventManager.mechanism_grew.emit(state.get_max_mech_level())
 	await get_tree().create_timer(dur).timeout
 	input_locked = false
 	EventManager.input_locked.emit(false)
-	if not finished:
-		_check_deadlock()
-
-
-func _current_mech_level() -> int:
-	var lv := 0
-	for m in _mechanisms:
-		lv = maxi(lv, m.level)
-	return lv
-
-
-func _check_deadlock() -> void:
-	if finished:
-		return
-	if _head_cell == grid.goal_cell:
-		_win()
-		return
-	if not grid.has_path(_head_cell, grid.goal_cell):
-		_fail()
-		return
-	# 身长可达判定（仅身长已达上限时触发）：尾部钉死 S，头可随时踏回身体
-	# 截断重规划——等效"从 S 重新出发、最多走 max_len-1 步"（身体不算阻挡，
-	# 可踏上即截断）。身长未满时玩家还能继续前进探索，不判定；伸到最长后若
-	# 终点与所有剩余食物都超出该范围，L 永不再增长（吃食物是唯一途径）且
-	# 可达范围只缩不增（机关不可逆）⇒ 必然死局。
-	if trail.size() < max_len:
-		return
-	if _spawn == null:
-		return
-	var reach := max_len - 1
-	var dist := grid.bfs_dist_map(_spawn.cell)
-	if dist.has(grid.goal_cell) and dist[grid.goal_cell] <= reach:
-		return  # 终点在当前身长可达范围内
-	for f in _foods:
-		if dist.has(f.cell) and dist[f.cell] <= reach:
-			return  # 还能吃到食物增大 L
-	_fail("管道不够长啊… 摘不到蓝花也捡不到花瓣")
+	if not finished and not res.deadlock_msg.is_empty():
+		_fail(res.deadlock_msg)
 
 
 func _win() -> void:
 	if finished:
 		return
 	finished = true
-	SaveManager.record_result("level_%d" % level_id, steps)
+	if not generated_active:
+		SaveManager.record_result("level_%d" % level_id, steps)
 	EventManager.level_cleared.emit(level_id, steps)
 	# 胜利剧情：先播完（含跳过）再弹结算面板；await 期间 R 重开则不再显示
 	if not story_win.is_empty():
@@ -777,7 +793,6 @@ func _ensure_dialogue() -> DialogueOverlay:
 
 
 func _update_hud() -> void:
-	var remaining_steps := maxi(max_len - trail.size(), 0)
-	_hud.update_remaining_steps(remaining_steps)
-	_hud.set_growth_countdown(_growth_interval - (steps % _growth_interval))
-	_hud.set_petal_gain(_food_len_gain)
+	_hud.update_remaining_steps(state.get_remaining_steps())
+	_hud.set_growth_countdown(state.get_growth_countdown())
+	_hud.set_petal_gain(state.food_len_gain)

@@ -12,8 +12,8 @@
 1. **遵循编码规范：** [coding-rules.md](../rules/coding-rules.md)（命名 / 类型标注 / 信号 / 事件驱动等）。
 2. **权威先行：** 移动/身长/截断/机关生长/BFS 规则以 [功能需求文档](../../design/功能需求文档.md) §4 为准，数值取自 `Balance.tres`；**禁止在脚本中硬编码规则数值或关卡布局**。
 3. **分层归属：**
-   - 全局生命周期 → `Scripts/Autoload/`（GameManager/EventManager/SaveManager；公共接口勿擅改）
-   - 玩法系统 → `Scripts/Systems/`（Level.gd、GridSystem），由关卡场景使用，**不进 Autoload**
+   - 全局生命周期 → `Scripts/Autoload/`（GameManager / EventManager / SaveManager / SfxManager；ButtonAudio 脚本在 `Scripts/UI/`、由 Autoload 场景挂载；公共接口勿擅改）
+   - 玩法系统 → `Scripts/Systems/`（Level.gd 表现编排 / LevelState 纯规则 / GridSystem 网格数据 / DialogueOverlay 剧情），由关卡场景使用，**不进 Autoload**
    - 实体 → `Scripts/Entities/`（CellEntity 基类 + PlayerSpawn/Mechanism/Food/Goal；障碍非实体，不在此列）
    - 数据类 → `Scripts/Data/`（Balance / MechanicShapes / GridMetrics）
 4. **通信纪律：**
@@ -26,15 +26,13 @@
 8. **新增信号：** 追加到 `EventManager` 文件尾 `## Gameplay` 区块，不删改既有信号签名。
 
 ## 示例
-机关生长（在 Level.gd 内，机关占格逻辑见 Mechanism.gd）：
+机关生长（规则在 `LevelState`，`Level.gd` 只做表现同步）：
 ```gdscript
 # 数值来自 GameManager.balance（Balance.tres），勿硬编码
-func _grow_all_mechanisms() -> void:
-    var blocked := _blocked_cells()   # 玩家身体 + S + E（保护格）
-    for m in _mechanisms:
-        if m.level < MechanicShapes.max_level():
-            m.set_level(m.level + 1)
-            m.claim_missing(blocked)  # 玩家身体阻挡的格本次跳过，lv 照升
-    _rebuild_mech_grid()              # 更新 GridSystem 占格，即时生效
-    EventManager.mechanism_grew.emit(_current_mech_level())
+# LevelState._grow()：
+#   1) g = min(g + 1, g_max)
+#   2) shielded = 身体轨迹 ∩ { cover_step <= g }   # 身体挡格延后占格
+#   3) 刷新 GridSystem.mech_cells（cover_step <= g 且未被 shielded）
+# 表现层随后 _sync_mech_layer() + _pop_mech_cells(result.added_mech_cells)
+EventManager.mechanism_grew.emit(state.get_max_mech_level())
 ```

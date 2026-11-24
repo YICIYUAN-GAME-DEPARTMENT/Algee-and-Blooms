@@ -14,6 +14,9 @@ extends CanvasLayer
 @onready var _overlay_text: Label = $Root/Overlay/Center/Panel/Content/Text
 @onready var _restart: Button = $Root/TopArea/ActionsPanel/Actions/RestartBtn
 @onready var _back: Button = $Root/TopArea/ActionsPanel/Actions/BackBtn
+@onready var _seed_btn: Button = $Root/SeedBtn
+@onready var _difficulty_label: Label = $Root/DifficultyLabel
+@onready var _tag_list: Label = $Root/TagList
 @onready var _overlay_restart: Button = $Root/Overlay/Center/Panel/Content/RestartBtn
 @onready var _overlay_back: Button = $Root/Overlay/Center/Panel/Content/BackBtn
 @onready var _next: Button = $Root/Overlay/Center/Panel/Content/NextBtn
@@ -25,10 +28,30 @@ extends CanvasLayer
 ## 剧情演出期间由 Level 置位：忽略 Esc（交给剧情层做"跳过"），防误开暂停菜单
 var dialogue_active := false
 
+const TAG_LABELS := {
+	"false_shortcut": "假捷径",
+	"gate_sequence": "机关时序",
+	"forced_truncation": "强制截断",
+	"overshoot_return": "诱导回折",
+	"mirror_fork": "镜像岔路",
+	"mutual_exclusion": "互斥诱饵",
+	"body_key": "身长钥匙",
+	"last_gasp": "最后一刻",
+	"tight_budget": "长度紧张",
+	"no_mechanism": "无机关",
+	"dense_maze": "密集迷宫",
+}
+
+var _generated_seed := 0
+
 
 func _ready() -> void:
 	_restart.pressed.connect(_restart_level)
 	_back.pressed.connect(_exit_level)
+	_seed_btn.pressed.connect(_copy_generated_seed)
+	_seed_btn.visible = false
+	_difficulty_label.visible = false
+	_tag_list.visible = false
 	_overlay_restart.pressed.connect(_restart_level)
 	_overlay_back.pressed.connect(_exit_level)
 	_next.pressed.connect(_next_level)
@@ -65,14 +88,56 @@ func set_growth_countdown(steps_left: int) -> void:
 
 
 ## 本关无机关时隐藏整个计数项
-func set_growth_visible(show: bool) -> void:
-	_grow_label.visible = show
-	_grow_card.visible = show
+func set_growth_visible(visible_now: bool) -> void:
+	_grow_label.visible = visible_now
+	_grow_card.visible = visible_now
 
 
 ## 顶栏关卡标题：第 N 关 · 关卡名（N = 场景 Level 根节点 level_id）
 func set_level_title(title: String) -> void:
 	_level_title.text = title
+
+
+## 随机关卡：显示"复制种子"按钮并记录当前种子。
+func set_generated_seed(seed_value: int) -> void:
+	_generated_seed = seed_value
+	_seed_btn.visible = seed_value > 0
+	_seed_btn.text = "复制种子"
+
+
+## 随机关卡：显示实测难度分（原始刻度 + 难度档）、真实最短步数、生成模型与障碍模型。
+func set_difficulty(score: int, steps: int, model: String = "", generator: String = "",
+		tier: String = "") -> void:
+	var text := "难度 %d" % score
+	if not tier.is_empty():
+		text += " (%s)" % tier
+	text += " · %d 步" % steps
+	if not generator.is_empty():
+		text += " · " + generator
+	if not model.is_empty():
+		text += " / " + model
+	_difficulty_label.text = text
+	_difficulty_label.visible = score > 0
+
+
+## 随机关卡：左上角纵向列出事后标签（每行一个）。
+func set_tags(tags: Array) -> void:
+	var lines: Array[String] = []
+	for tag in tags:
+		var key := str(tag)
+		lines.append(TAG_LABELS.get(key, key))
+	_tag_list.text = "\n".join(lines)
+	_tag_list.visible = not lines.is_empty()
+
+
+func _copy_generated_seed() -> void:
+	if _generated_seed <= 0:
+		return
+	DisplayServer.clipboard_set(str(_generated_seed))
+	_seed_btn.text = "已复制"
+	await get_tree().create_timer(1.2).timeout
+	if is_instance_valid(_seed_btn):
+		_seed_btn.text = "复制种子"
 
 
 ## 结算面板：victory=true 时显示"下一关"按钮；失败隐藏。
