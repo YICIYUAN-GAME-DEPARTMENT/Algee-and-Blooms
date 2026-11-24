@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-24",
+  "captured_with": "tools/LevelSolver.gd（GDScript LevelState 版，迁移 C# 前基线）",
+  "note": "规则迁移到 C# 后，求解结果必须与本文逐字一致（status/states/steps/route）。",
+  "levels": [
+    { "level_id": 1, "name": "走过去", "status": "SOLVABLE", "states": 5406, "steps": 9, "route": "DDDDDDDDD" },
+    { "level_id": 2, "name": "散落的花瓣", "status": "SOLVABLE", "states": 3585, "steps": 12, "route": "DDDDDSWDDDDD" },
+    { "level_id": 3, "name": "不能碰花！", "status": "SOLVABLE", "states": 7448, "steps": 19, "route": "DSDDDAAAWWDDDDDWDDS" },
+    { "level_id": 4, "name": "这些花怎么在变多啊！", "status": "SOLVABLE", "states": 20724, "steps": 17, "route": "DDDDDSSDDDSSSSSSS" },
+    { "level_id": 5, "name": "直面恐惧吧！", "status": "SOLVABLE", "states": 59532, "steps": 19, "route": "DDWDAWAWWDWDDDDWDDD" }
+  ]
+}
