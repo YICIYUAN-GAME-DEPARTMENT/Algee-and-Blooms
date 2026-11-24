@@ -30,7 +30,7 @@ Growth/
 │   └── Entities/            # PlayerSpawn / Food / Goal / Mechanism
 ├── Scripts/
 │   ├── Autoload/            # GameManager(balance) / EventManager / SaveManager
-│   ├── Systems/             # Level.gd / GridSystem（网格+BFS）
+│   ├── Systems/             # Level.gd（表现）/ LevelState（纯规则）/ GridSystem（网格+BFS）
 │   ├── Entities/            # CellEntity 基类 / PlayerSpawn / Food / Goal / Mechanism
 │   ├── UI/  Data/           # UI 逻辑 / 数据类（Balance/MechanicShapes/GridMetrics）
 ├── Resources/
@@ -38,7 +38,7 @@ Growth/
 │   └── Dialogue/            # 剧情剧本 / 角色注册表（JSON）
 ├── Art/                     # Sprites / Tiles / Portraits / UI / Backdrops（正式美术 + 占位，登记 A-xx，见开发文档 §3.9）
 ├── Audio/                   # SFX / Music（音频目录占位）
-├── tools/                   # 贴图/瓦片集生成工具（headless 运行）
+├── tools/                   # 生成/校验工具（headless；含 LevelSolver 可解性/路线）
 ├── docs/                    # 开发文档 / 功能需求 / 架构 / 环境 / 技能 / 规则
 └── AGENTS.md                # AI 智能体角色与协作约定
 ```

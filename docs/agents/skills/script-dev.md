@@ -26,15 +26,13 @@
 8. **新增信号：** 追加到 `EventManager` 文件尾 `## Gameplay` 区块，不删改既有信号签名。
 
 ## 示例
-机关生长（在 Level.gd 内，机关占格逻辑见 Mechanism.gd）：
+机关生长（规则在 `LevelState`，`Level.gd` 只做表现同步）：
 ```gdscript
 # 数值来自 GameManager.balance（Balance.tres），勿硬编码
-func _grow_all_mechanisms() -> void:
-    var blocked := _blocked_cells()   # 玩家身体 + S + E（保护格）
-    for m in _mechanisms:
-        if m.level < MechanicShapes.max_level():
-            m.set_level(m.level + 1)
-            m.claim_missing(blocked)  # 玩家身体阻挡的格本次跳过，lv 照升
-    _rebuild_mech_grid()              # 更新 GridSystem 占格，即时生效
-    EventManager.mechanism_grew.emit(_current_mech_level())
+# LevelState._grow()：
+#   1) g = min(g + 1, g_max)
+#   2) shielded = 身体轨迹 ∩ { cover_step <= g }   # 身体挡格延后占格
+#   3) 刷新 GridSystem.mech_cells（cover_step <= g 且未被 shielded）
+# 表现层随后 _sync_mech_layer() + _pop_mech_cells(result.added_mech_cells)
+EventManager.mechanism_grew.emit(state.get_max_mech_level())
 ```
