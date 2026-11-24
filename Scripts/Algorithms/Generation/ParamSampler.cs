@@ -37,7 +37,7 @@ public static class ParamSampler
         {
             int l0 = 3 + rng.NextInt(5);
             int gain = 2 + rng.NextInt(3);
-            int interval = 4 + rng.NextInt(5);
+            int interval = 5 + rng.NextInt(4);
             int cap = 1 + rng.NextInt(4);
 
             var levels = new List<int>(mechCount);

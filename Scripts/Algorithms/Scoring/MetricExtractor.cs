@@ -59,11 +59,42 @@ public static class MetricExtractor
         bool routeValid = true;
         var eatenFoods = new HashSet<Cell>();
         var obstacleSet = new HashSet<Cell>(spec.Obstacles);
+        var routeCells = new List<Cell>();
+        var routeDirs = new List<Cell>();
+        var grewSteps = new List<int>();
+        var mechCovered = new HashSet<Cell>(st.CoverSteps.Keys);
+        int minDistToGoal = int.MaxValue;
+        bool overshootActive = false;
+        bool overshootReturn = false;
+        int overshootPeak = 0;
+        int overshootMax = 0;
+        int bodyKeyStep = -1;
+        int bodyKeyRemaining = 0;
+        int bodyKeyOptions = 0;
 
         for (int i = 0; i < steps; i++)
         {
             Cell head = st.Head;
             minSlack = Math.Min(minSlack, st.GetRemainingSteps());
+            routeCells.Add(head);
+            int distGoal = distFromGoal.TryGetValue(head, out int dg) ? dg : int.MaxValue;
+            if (distGoal != int.MaxValue)
+            {
+                if (minDistToGoal == int.MaxValue || distGoal < minDistToGoal)
+                {
+                    minDistToGoal = distGoal;
+                }
+                if (minDistToGoal != int.MaxValue && distGoal >= minDistToGoal + 3)
+                {
+                    overshootActive = true;
+                    overshootPeak = Math.Max(overshootPeak, distGoal);
+                }
+                else if (overshootActive && distGoal <= overshootPeak - 2)
+                {
+                    overshootReturn = true;
+                    overshootMax = Math.Max(overshootMax, overshootPeak - minDistToGoal);
+                }
+            }
 
             int walkOptions = 0;
             int legal = 0;
@@ -87,6 +118,14 @@ public static class MetricExtractor
 
             Cell chosenDir = DirCell(route[i]);
             Cell chosen = head + chosenDir;
+            routeDirs.Add(chosenDir);
+            int remaining = st.GetRemainingSteps();
+            if (bodyKeyStep < 0 && walkOptions == 1 && remaining <= 2)
+            {
+                bodyKeyStep = i + 1;
+                bodyKeyRemaining = remaining;
+                bodyKeyOptions = walkOptions;
+            }
             if (st.ClassifyMove(chosen) == RuleState.MoveKind.Body && walkOptions == 0)
             {
                 forcedTruncations++;
@@ -129,12 +168,27 @@ public static class MetricExtractor
             {
                 eatenFoods.Add(chosen);
             }
-            if (outcome.Grew && i >= lateStart)
+            if (outcome.Grew)
             {
-                lateGrowth = true;
+                grewSteps.Add(i + 1);
+                if (i >= lateStart)
+                {
+                    lateGrowth = true;
+                }
             }
         }
         minSlack = Math.Min(minSlack, st.GetRemainingSteps());
+
+        vector.RouteCells = routeCells;
+        vector.RouteDirs = routeDirs;
+        vector.GrewSteps = grewSteps;
+        vector.MechCovered = mechCovered;
+        vector.EatenFoods = eatenFoods;
+        vector.OvershootReturn = overshootReturn;
+        vector.OvershootMax = overshootMax;
+        vector.BodyKeyStep = bodyKeyStep;
+        vector.BodyKeyRemaining = bodyKeyRemaining;
+        vector.BodyKeyOptions = bodyKeyOptions;
 
         int foodEaten = eatenFoods.Count;
         int finalTrail = Math.Max(st.Trail.Count, 1);
@@ -496,6 +550,16 @@ public static class MetricExtractor
 public sealed class MetricVector
 {
     public bool RouteValid;
+    internal List<Cell> RouteCells = new();
+    internal List<Cell> RouteDirs = new();
+    internal List<int> GrewSteps = new();
+    internal HashSet<Cell> MechCovered = new();
+    internal HashSet<Cell> EatenFoods = new();
+    internal bool OvershootReturn;
+    internal int OvershootMax;
+    internal int BodyKeyStep = -1;
+    internal int BodyKeyRemaining;
+    internal int BodyKeyOptions;
     public int M01Steps;
     public int M02MinSlack;
     public int M03EndSlack;

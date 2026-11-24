@@ -464,10 +464,12 @@ public partial class RouteFirstGenerator : RefCounted
         st.Start();
 
         int inserted = 0;
+        int lastDir = -1;
+        int biasDir = rng.NextInt(Directions.Length);
 
         for (int step = 0; step < targetSteps; step++)
         {
-            int pick = ChooseDirection(st, rng);
+            int pick = ChooseDirection(st, rng, lastDir, biasDir);
             if (pick < 0)
             {
                 // 没有合法方向：地形堵死，换下一张候选图。
@@ -499,6 +501,7 @@ public partial class RouteFirstGenerator : RefCounted
             dirs.Add(DirChars[pick]);
             walked.Add(st.Head);
             trailOrder.Add(st.Head);
+            lastDir = pick;
 
             if (st.GetRemainingSteps() <= 0 && kind != RuleState.MoveKind.Body)
             {
@@ -511,8 +514,11 @@ public partial class RouteFirstGenerator : RefCounted
         return true;
     }
 
-    /// <summary>方向选择：Walk 优先，15% 概率故意截断制造回头路线；无路可走返回 -1。</summary>
-    private static int ChooseDirection(RuleState st, DeterministicRng rng)
+    /// <summary>
+    /// 方向选择：Walk 优先，8% 概率故意截断；55% 主方向偏置 + 60% 惯性，
+    /// 让路线整体朝一个方向推进、减少无意义折返。
+    /// </summary>
+    private static int ChooseDirection(RuleState st, DeterministicRng rng, int lastDir, int biasDir)
     {
         Span<int> walkOptions = stackalloc int[4];
         Span<int> bodyOptions = stackalloc int[4];
@@ -533,9 +539,29 @@ public partial class RouteFirstGenerator : RefCounted
         }
         if (walkCount > 0)
         {
-            if (bodyCount > 0 && rng.NextInt(100) < 15)
+            if (bodyCount > 0 && rng.NextInt(100) < 8)
             {
                 return bodyOptions[rng.NextInt(bodyCount)];
+            }
+            if (biasDir >= 0 && rng.NextInt(100) < 55)
+            {
+                for (int i = 0; i < walkCount; i++)
+                {
+                    if (walkOptions[i] == biasDir)
+                    {
+                        return biasDir;
+                    }
+                }
+            }
+            if (lastDir >= 0 && rng.NextInt(100) < 60)
+            {
+                for (int i = 0; i < walkCount; i++)
+                {
+                    if (walkOptions[i] == lastDir)
+                    {
+                        return lastDir;
+                    }
+                }
             }
             return walkOptions[rng.NextInt(walkCount)];
         }
@@ -549,7 +575,17 @@ public partial class RouteFirstGenerator : RefCounted
     private static void AddDecoyFoods(DeterministicRng rng, LevelSpec spec, HashSet<Cell> walked,
         int steps, int min, int max)
     {
-        int count = min + rng.NextInt(max - min + 1);
+        int count;
+        if (min == 0 && max == 2)
+        {
+            // 诱饵数量权重：0 个 40% / 1 个 40% / 2 个 20%，避免假捷径标签过密。
+            int roll = rng.NextInt(10);
+            count = roll < 4 ? 0 : roll < 8 ? 1 : 2;
+        }
+        else
+        {
+            count = min + rng.NextInt(max - min + 1);
+        }
         if (count <= 0)
         {
             return;
@@ -658,6 +694,16 @@ public partial class RouteFirstGenerator : RefCounted
             metrics[kv.Key] = kv.Value;
         }
 
+        // 事后分类：只写标签与证据，不参与生成决策。
+        TagResult tags = LevelTagger.Tag(spec, route, vector, options);
+        spec.Tags.Clear();
+        spec.Tags.AddRange(tags.Tags);
+        spec.TagEvidence.Clear();
+        foreach (KeyValuePair<string, string> kv in tags.Evidence)
+        {
+            spec.TagEvidence[kv.Key] = kv.Value;
+        }
+
         // 质量分先沿用旧三项口径（S4 再按规划稿 §5.5 补 cue / 结构 / 可读性）。
         double quality = 100.0 * (0.5 * vector.MechNorm + 0.3 * vector.DetourNorm + 0.2 * vector.TightNorm);
         return new LevelScore
@@ -667,6 +713,8 @@ public partial class RouteFirstGenerator : RefCounted
             Quality = (int)Math.Round(quality),
             ScoringVersion = 2,
             Metrics = values,
+            Tags = tags.Tags,
+            TagEvidence = tags.Evidence,
             CEstimated = vector.CEstimated,
         };
     }

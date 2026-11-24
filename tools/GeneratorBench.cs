@@ -28,6 +28,13 @@ public partial class GeneratorBench : Node
     private const int GeneratorVersion = 1;
     private const int ScoringVersion = 2;
 
+    private static readonly string[] TagNames =
+    {
+        "false_shortcut", "gate_sequence", "forced_truncation", "overshoot_return",
+        "mirror_fork", "mutual_exclusion", "body_key", "last_gasp",
+        "tight_budget", "no_mechanism", "dense_maze",
+    };
+
     public override void _Ready()
     {
         Dictionary<string, string> args = ParseArgs(OS.GetCmdlineUserArgs());
@@ -60,6 +67,11 @@ public partial class GeneratorBench : Node
         int failed = 0;
         bool determinismOk = true;
         var sizeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var tagCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string tag in TagNames)
+        {
+            tagCounts[tag] = 0;
+        }
 
         foreach (string tier in tiers)
         {
@@ -121,6 +133,19 @@ public partial class GeneratorBench : Node
                 row["mech_count"] = result.Spec.MechCenters.Count;
                 row["route"] = result.Solution.Route;
                 row["metrics"] = MetricsToJson(result.Metrics);
+                var tagsArr = new JsonArray();
+                foreach (string tag in result.Spec.Tags)
+                {
+                    tagsArr.Add(tag);
+                    tagCounts[tag] = tagCounts.TryGetValue(tag, out int tc) ? tc + 1 : 1;
+                }
+                row["tags"] = tagsArr;
+                var evidenceObj = new JsonObject();
+                foreach (KeyValuePair<string, string> kv in result.Spec.TagEvidence)
+                {
+                    evidenceObj[kv.Key] = kv.Value;
+                }
+                row["tag_evidence"] = evidenceObj;
                 row["score"] = result.Score?.Difficulty ?? 0;
                 row["quality"] = result.Score?.Quality ?? 0;
                 row["spec_sha256"] = Sha256(specJson);
@@ -182,6 +207,7 @@ public partial class GeneratorBench : Node
             ["per_tier"] = PerTierJson(perTier),
             ["score_hist"] = ScoreHistJson(perTier),
             ["size_hist"] = SizeHistJson(sizeCounts),
+            ["tag_coverage"] = TagCoverageJson(tagCounts, ok),
         };
 
         string benchPath = outDir.TrimEnd('/') + $"/bench_gv{genver}.json";
@@ -282,6 +308,20 @@ public partial class GeneratorBench : Node
         foreach (KeyValuePair<string, int> kv in counts.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             obj[kv.Key] = kv.Value;
+        }
+        return obj;
+    }
+
+    private static JsonObject TagCoverageJson(Dictionary<string, int> counts, int total)
+    {
+        var obj = new JsonObject();
+        foreach (KeyValuePair<string, int> kv in counts.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            obj[kv.Key] = new JsonObject
+            {
+                ["count"] = kv.Value,
+                ["ratio"] = total > 0 ? Round3(kv.Value / (double)total) : 0,
+            };
         }
         return obj;
     }

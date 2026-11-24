@@ -37,6 +37,7 @@ public partial class CoreTests : Node
         TestParams();
         TestLevelSpecV2();
         TestMetrics();
+        TestTagger();
         TestGenerator();
         await TestGoldenLevels();
         TestScoreAnchors();
@@ -297,6 +298,47 @@ public partial class CoreTests : Node
         state.RestoreState(snapshot);
         Check(state.GetSteps() == stepsBefore && state.Head.Equals(headBefore),
             "指标: 快照恢复 trail/steps/head");
+    }
+
+    /// <summary>标签分类器：无机关样例 + 重复分类一致。</summary>
+    private void TestTagger()
+    {
+        var spec = new LevelSpec
+        {
+            Origin = Cell.Zero,
+            Width = 10,
+            Height = 10,
+            Spawn = new Cell(0, 0),
+            Goal = new Cell(5, 0),
+            InitialMaxLen = 12,
+            FoodLenGain = 2,
+            GrowthInterval = 6,
+            MechanismCap = 4,
+        };
+        for (int y = 0; y < 10; y++)
+        {
+            for (int x = 0; x < 10; x++)
+            {
+                spec.Floor.Add(new Cell(x, y));
+            }
+        }
+
+        var options = new MetricOptions
+        {
+            EnableFalseAffordance = false,
+            EnableFunnel = false,
+            EnableNaiveStrategies = false,
+        };
+        MetricVector v = MetricExtractor.Extract(spec, "DDDDD", options);
+        TagResult first = LevelTagger.Tag(spec, "DDDDD", v, options);
+        TagResult second = LevelTagger.Tag(spec, "DDDDD", v, options);
+        Check(first.Tags.Contains("no_mechanism"), "标签: 无机关标签");
+        Check(first.Evidence.ContainsKey("no_mechanism"), "标签: 证据字段完整");
+        Check(first.Tags.Count == second.Tags.Count, "标签: 重复分类数量一致");
+        for (int i = 0; i < first.Tags.Count; i++)
+        {
+            Check(first.Tags[i] == second.Tags[i], $"标签: 重复分类第 {i} 项一致");
+        }
     }
 
     private void TestGenerator()
