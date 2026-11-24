@@ -34,10 +34,13 @@ public partial class CoreTests : Node
         TestMovementAndTruncation();
         TestFood();
         TestGrowthAndShield();
+        TestParams();
+        TestLevelSpecV2();
         TestMetrics();
         TestGenerator();
         await TestGoldenLevels();
         TestScoreAnchors();
+        TestLargeSize();
 
         GD.Print($"=== CoreTests: {_passed} passed, {_failed} failed ===");
         GetTree().Quit(_failed == 0 ? 0 : 1);
@@ -168,6 +171,72 @@ public partial class CoreTests : Node
         Check(st.GetClaimedCells().Count == 5, "机关: 满级后刷新补占中心格");
     }
 
+    /// <summary>参数采样可行域（§8.2）与签名格式。</summary>
+    private void TestParams()
+    {
+        Check(ParamSampler.Feasible(3, 4, 4, 1, 8, 0), "参数: 短图可行组合");
+        Check(!ParamSampler.Feasible(7, 2, 8, 4, 8, 0), "参数: 大 L0 + 短图拒绝");
+        Check(!ParamSampler.Feasible(3, 2, 8, 4, 12, 0), "参数: 周期装不下 cap 拒绝");
+        Check(!ParamSampler.Feasible(3, 4, 4, 1, 8, 6), "参数: 地板不足拒绝");
+        Check(ParamSampler.Feasible(6, 2, 4, 2, 12, 0), "参数: 中段可行组合");
+        Check(ParamSampler.Feasible(7, 4, 4, 4, 38, 0), "参数: 20×20 长路线可行");
+
+        var rng = new DeterministicRng(42);
+        ParamSet param = ParamSampler.Sample(rng, 16, 2);
+        Check(param != null, "参数: 采样成功");
+        if (param != null)
+        {
+            Check(param.InitialMaxLen >= 3 && param.InitialMaxLen <= 7, "参数: L0 在 3–7");
+            Check(param.FoodLenGain >= 2 && param.FoodLenGain <= 4, "参数: Gain 在 2–4");
+            Check(param.GrowthInterval >= 4 && param.GrowthInterval <= 8, "参数: I 在 4–8");
+            Check(param.MechanismCap >= 1 && param.MechanismCap <= 4, "参数: cap 在 1–4");
+            Check(param.InitialLevels.Count == 2, "参数: 机关初始阶段数量");
+            Check(param.Signature.Split('|').Length == 5, "参数: 签名格式");
+        }
+    }
+
+    /// <summary>LevelSpec schema v2 往返与 v1 兼容。</summary>
+    private void TestLevelSpecV2()
+    {
+        var spec = new LevelSpec
+        {
+            Seed = 7,
+            Tier = "hard",
+            Width = 14,
+            Height = 14,
+            Origin = new Cell(-2, -3),
+            Spawn = new Cell(0, 0),
+            Goal = new Cell(3, 3),
+            InitialMaxLen = 5,
+            FoodLenGain = 3,
+            GrowthInterval = 6,
+            MechanismCap = 2,
+            TargetScore = 76,
+            BudgetUnits = 12,
+            ParamSignature = "5|3|6|2|0,1",
+            Tags = { "tight_budget", "gate_sequence" },
+            TagEvidence = { ["gate_sequence"] = "g=2" },
+        };
+        spec.Floor.Add(new Cell(0, 0));
+        spec.Floor.Add(new Cell(3, 3));
+        spec.Foods.Add(new Cell(1, 1));
+        spec.MechCenters.Add(new Cell(2, 2));
+        spec.MechInitialLevels.Add(1);
+
+        LevelSpec back = LevelSpec.FromJson(spec.ToJson());
+        Check(back.SchemaVersion == 2, "Schema: v2 往返版本");
+        Check(back.Tier == "hard", "Schema: tier 往返");
+        Check(back.ParamSignature == "5|3|6|2|0,1", "Schema: 参数签名往返");
+        Check(back.TargetScore == 76 && back.BudgetUnits == 12, "Schema: 目标分 / 预算往返");
+        Check(back.Tags.Count == 2 && back.TagEvidence.Count == 1, "Schema: 标签与证据往返");
+
+        string v1Json = FileAccess.GetFileAsString("res://tests/fixtures/anchors/level_01.json");
+        LevelSpec v1 = LevelSpec.FromJson(v1Json);
+        Check(v1.SchemaVersion == 1, "Schema: v1 快照读回");
+        Check(v1.Tags.Count == 0 && v1.TagEvidence.Count == 0, "Schema: v1 标签默认空");
+        Check(v1.ParamSignature == "", "Schema: v1 签名默认空");
+    }
+
     /// <summary>指标提取器手算单测（空场直线）+ RuleState 快照往返。</summary>
     private void TestMetrics()
     {
@@ -238,6 +307,9 @@ public partial class CoreTests : Node
         int failed = 0;
         int replayFailed = 0;
         int differentialFailed = 0;
+        int specFieldFailed = 0;
+        var signatures = new HashSet<string>();
+        var sizes = new HashSet<int>();
 
         foreach (string band in bands)
         {
@@ -247,8 +319,6 @@ public partial class CoreTests : Node
                 var cfg = new GeneratorConfig
                 {
                     Seed = seed,
-                    Width = 12,
-                    Height = 12,
                     Difficulty = band,
                     Candidates = 1,
                     MaxAttempts = 32,
@@ -285,6 +355,12 @@ public partial class CoreTests : Node
                     }
                     continue;
                 }
+                signatures.Add(result.Spec.ParamSignature);
+                sizes.Add(Math.Max(result.Spec.Width, result.Spec.Height));
+                if (result.Spec.SchemaVersion != 2 || string.IsNullOrEmpty(result.Spec.ParamSignature))
+                {
+                    specFieldFailed++;
+                }
                 scores.Add(result.Score.Difficulty);
             }
             scoresByBand[band] = scores;
@@ -293,6 +369,10 @@ public partial class CoreTests : Node
         Check(failed == 0, $"生成: 180 个 seed 全部成功（失败 {failed}）");
         Check(replayFailed == 0, $"生成: 全部路线可重放通关（失败 {replayFailed}）");
         Check(differentialFailed == 0, $"生成: Step 与 StepCore 逐步一致（失败 {differentialFailed}）");
+        Check(specFieldFailed == 0, $"生成: v2 字段完整（失败 {specFieldFailed}）");
+        Check(signatures.Count >= 20, $"生成: 参数签名多样化（{signatures.Count} 种）");
+        Check(sizes.Count >= 3, $"生成: 尺寸多样化（{sizes.Count} 种）");
+        GD.Print($"生成参数: 签名 {signatures.Count} 种，尺寸 {string.Join(",", sizes)}");
 
         var all = new List<int>();
         foreach (string band in bands)
@@ -347,7 +427,7 @@ public partial class CoreTests : Node
             avg /= timings.Count;
             double p95 = timings[Math.Min(timings.Count - 1, (int)(timings.Count * 0.95))];
             GD.Print($"生成性能: avg={avg:F2} ms p95={p95:F2} ms max={timings[^1]:F2} ms");
-            Check(p95 < 50.0, $"生成性能: p95 {p95:F2} ms < 50 ms");
+            Check(p95 < 150.0, $"生成性能: p95 {p95:F2} ms < 150 ms（混合尺寸）");
         }
     }
 
@@ -576,5 +656,34 @@ public partial class CoreTests : Node
             GD.Print($"[Anchor] L{id} D={v.DRaw:F3} score={score} " +
                 $"M14={v.M14FalseAffordance} M16={v.M16FunnelWidth} CEst={(v.CEstimated ? 1 : 0)}");
         }
+    }
+
+    /// <summary>20×20 可生成 + 固定尺寸 + Loading 档开发机等效预算。</summary>
+    private void TestLargeSize()
+    {
+        var cfg = new GeneratorConfig
+        {
+            Seed = 1,
+            Difficulty = "expert",
+            Width = 20,
+            Height = 20,
+            Candidates = 1,
+            MaxAttempts = 16,
+        };
+        ulong t0 = Time.GetTicksUsec();
+        GenerationResult result = RouteFirstGenerator.GenerateCore(cfg);
+        double ms = (Time.GetTicksUsec() - t0) / 1000.0;
+        Check(result.Success, $"大尺寸: 20×20 可生成（{ms:F0} ms）");
+        if (!result.Success)
+        {
+            GD.PushError($"大尺寸: 20×20 失败 reason={result.Reason}");
+            return;
+        }
+        GD.Print($"[Large] size={result.Spec.Width}x{result.Spec.Height} floor={result.Spec.Floor.Count} " +
+            $"route={result.Solution.Route.Length} mechs={result.Spec.MechCenters.Count} " +
+            $"param={result.Spec.ParamSignature} attempts={result.Attempts}");
+        Check(result.Spec.Width == 20 && result.Spec.Height == 20, "大尺寸: 固定尺寸生效");
+        Check(result.Spec.MechCenters.Count > 0, "大尺寸: 含机关");
+        Check(ms < 1600.0, $"大尺寸: 20×20 耗时 {ms:F0} ms < 1600 ms（开发机 Loading 等效）");
     }
 }

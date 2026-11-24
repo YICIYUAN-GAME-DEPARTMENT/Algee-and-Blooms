@@ -6,17 +6,20 @@ using System.Text.Json.Serialization;
 namespace Growth.Algorithms;
 
 /// <summary>
-/// 关卡静态数据契约（schema_version = 1）。
+/// 关卡静态数据契约（schema_version = 2；v1 缺字段由默认值兼容）。
 /// 生成器输出、运行时 LevelBuilder 输入、测试 fixture 共用同一结构。
 /// JSON 字段使用 snake_case，便于外部工具与后续版本化。
 /// </summary>
 public sealed class LevelSpec
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
+    /// <summary>生成器版本（含评分 / 标签语义版本）。</summary>
     public int GeneratorVersion { get; set; } = 1;
     public long Seed { get; set; }
     public int LevelId { get; set; }
     public string Name { get; set; } = "";
+    /// <summary>难度档：easy / normal / hard / expert。</summary>
+    public string Tier { get; set; } = "";
     public Cell Origin { get; set; } = Cell.Zero;
     public int Width { get; set; } = 32;
     public int Height { get; set; } = 32;
@@ -31,6 +34,16 @@ public sealed class LevelSpec
     public int FoodLenGain { get; set; } = 2;
     public int GrowthInterval { get; set; } = 6;
     public int MechanismCap { get; set; } = 4;
+    /// <summary>事后分类结果（S4 起填充；只读标注，不参与生成决策）。</summary>
+    public List<string> Tags { get; set; } = new();
+    /// <summary>标签证据（S4 起填充：指标值 / 格坐标 / 步序）。</summary>
+    public Dictionary<string, string> TagEvidence { get; set; } = new();
+    /// <summary>生成时的目标分（可追溯）。</summary>
+    public int TargetScore { get; set; }
+    /// <summary>实际消耗的工作单元数（S6 起填充）。</summary>
+    public int BudgetUnits { get; set; }
+    /// <summary>参数规范串：L0|Gain|I|cap|a_k。</summary>
+    public string ParamSignature { get; set; } = "";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

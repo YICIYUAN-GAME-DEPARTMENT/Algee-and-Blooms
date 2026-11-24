@@ -9,8 +9,9 @@ namespace Growth.Algorithms.Generation;
 public sealed class GeneratorConfig
 {
     public long Seed { get; set; }
-    public int Width { get; set; } = 12;
-    public int Height { get; set; } = 12;
+    /// <summary>0 = 按 tier 从尺寸阶梯采样；>0 时固定尺寸（测试 / 工具用）。</summary>
+    public int Width { get; set; }
+    public int Height { get; set; }
     /// <summary>0 = 按难度带采样目标步数。</summary>
     public int TargetSteps { get; set; }
     /// <summary>-1 = 按难度带采样机关数量。</summary>
@@ -35,28 +36,15 @@ public sealed class GenerationResult
 
 /// <summary>
 /// 地形优先 + 随机规则行走的种子生成器：
-///   1. 噪波 + 细胞自动机生成洞窟地形，取最大连通分量；
-///   2. 蓝噪声式采样机关中心，参数按难度带抖动；
-///   3. 在真实 RuleState 上做随机行走（关闭死局判定），身长不足时回填花瓣；
-///   4. 终点 = 行走终点；补诱饵花瓣；
-///   5. 用同一 RuleState 重放验证，计算难度分；
+///   1. 按 tier 采样尺寸（10×10–20×20）与每关参数（L0 / Gain / I / cap / initial_level）；
+///   2. 噪波 + 细胞自动机生成洞窟地形，取最大连通分量；
+///   3. 在真实 RuleState 上随机行走（相位排花），终点 = 行走终点；
+///   4. 机关蓝噪声撒点 + 时间窗验证；诱饵只在假捷径候选中放；
+///   5. 用同一 RuleState 重放验证，计算评分 v2；
 ///   6. 生成多个候选，按难度带目标分选。
 /// </summary>
 public partial class RouteFirstGenerator : RefCounted
 {
-    private const int FoodLenGain = 2;
-
-    /// <summary>
-    /// 生成器候选评分预算：C 类指标（M14/M16）只做轻量有界估计；
-    /// 锚点校准与 Top-K 复核使用完整预算（见 CoreTests / S5）。
-    /// </summary>
-    private static readonly MetricOptions ScoreOptions = new()
-    {
-        FunnelNodeBudget = 600,
-        FunnelMaxCount = 200,
-        SolveNodeBudget = 12_000,
-    };
-
     private static readonly Vector2I[] Directions =
     {
         new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
@@ -94,54 +82,17 @@ public partial class RouteFirstGenerator : RefCounted
         return difficulty switch
         {
             "easy" => new Band(8, 12, 5, 7, 1, 1, 1, 55),
+            "normal" => new Band(12, 18, 4, 6, 2, 1, 2, 66),
             "hard" => new Band(18, 26, 3, 5, 2, 2, 3, 76),
+            "expert" => new Band(26, 38, 4, 5, 4, 2, 3, 120),
             _ => new Band(12, 18, 4, 6, 2, 1, 2, 66),
         };
     }
 
-    /// <summary>GDScript 入口：固定步数与机关数（兼容旧调用）。</summary>
-    public Godot.Collections.Dictionary Generate(long seed, int width, int height, int targetSteps, int mechanismCount)
+    /// <summary>窄 API：纯 C# 生成（运行时 / 工具入口）。</summary>
+    public static GenerationResult GenerateSpec(long seed, string tier)
     {
-        return GenerateToDictionary(new GeneratorConfig
-        {
-            Seed = seed,
-            Width = Math.Max(width, 6),
-            Height = Math.Max(height, 6),
-            TargetSteps = Math.Max(targetSteps, 2),
-            MechanismCount = Math.Max(mechanismCount, 0),
-        });
-    }
-
-    /// <summary>GDScript 入口：按难度带生成。</summary>
-    public Godot.Collections.Dictionary GenerateBand(long seed, int width, int height, string difficulty)
-    {
-        return GenerateToDictionary(new GeneratorConfig
-        {
-            Seed = seed,
-            Width = Math.Max(width, 6),
-            Height = Math.Max(height, 6),
-            Difficulty = difficulty,
-        });
-    }
-
-    private Godot.Collections.Dictionary GenerateToDictionary(GeneratorConfig cfg)
-    {
-        GenerationResult r = GenerateCore(cfg);
-        var dict = new Godot.Collections.Dictionary
-        {
-            { "success", r.Success },
-            { "attempts", r.Attempts },
-            { "reason", r.Reason },
-        };
-        if (r.Success)
-        {
-            dict["spec"] = r.Spec.ToJson();
-            dict["route"] = r.Solution.Route;
-            dict["steps"] = r.Solution.Steps;
-            dict["score"] = r.Score.Difficulty;
-            dict["difficulty"] = r.Spec.Name;
-        }
-        return dict;
+        return GenerateCore(new GeneratorConfig { Seed = seed, Difficulty = tier });
     }
 
     internal static GenerationResult GenerateCore(GeneratorConfig cfg)
@@ -172,7 +123,18 @@ public partial class RouteFirstGenerator : RefCounted
                     ? cfg.MechanismCount
                     : band.MinMechs + rng.NextInt(band.MaxMechs - band.MinMechs + 1);
 
-                GenerationResult candidate = TryBuild(cfg, band, rng, targetSteps, mechCount);
+                (int width, int height) = cfg.Width > 0 && cfg.Height > 0
+                    ? (cfg.Width, cfg.Height)
+                    : SizeLadder.Choose(rng, cfg.Difficulty);
+                ParamSet param = ParamSampler.Sample(rng, targetSteps, mechCount);
+                if (param == null)
+                {
+                    lastReason = "参数组合不可行";
+                    continue;
+                }
+
+                GenerationResult candidate = TryBuild(cfg, band, rng, targetSteps, mechCount,
+                    width, height, param);
                 if (!candidate.Success)
                 {
                     lastReason = candidate.Reason;
@@ -203,12 +165,16 @@ public partial class RouteFirstGenerator : RefCounted
     }
 
     private static GenerationResult TryBuild(GeneratorConfig cfg, Band band, DeterministicRng rng,
-        int targetSteps, int mechCount)
+        int targetSteps, int mechCount, int width, int height, ParamSet param)
     {
-        List<Cell> floor = BuildTerrain(rng, cfg.Width, cfg.Height, targetSteps + 4);
+        List<Cell> floor = BuildTerrain(rng, width, height, targetSteps + 8 + width);
         if (floor == null)
         {
             return Fail("地形连通分量过小");
+        }
+        if (targetSteps > 0.9 * floor.Count)
+        {
+            return Fail("地板不足以承载路线");
         }
 
         Cell spawn = floor[rng.NextInt(floor.Count)];
@@ -217,22 +183,26 @@ public partial class RouteFirstGenerator : RefCounted
         {
             Seed = cfg.Seed,
             Name = cfg.Difficulty,
+            Tier = cfg.Difficulty,
             Origin = Cell.Zero,
-            Width = cfg.Width,
-            Height = cfg.Height,
+            Width = width,
+            Height = height,
             Floor = floor,
             Spawn = spawn,
             Goal = new Cell(-1, -1), // 行走阶段占位，完成后替换为终点
-            InitialMaxLen = band.InitialMaxLen,
-            FoodLenGain = FoodLenGain,
-            GrowthInterval = band.GrowthInterval,
-            MechanismCap = band.MechCap,
+            InitialMaxLen = param.InitialMaxLen,
+            FoodLenGain = param.FoodLenGain,
+            GrowthInterval = param.GrowthInterval,
+            MechanismCap = param.MechanismCap,
+            TargetScore = band.TargetScore,
+            ParamSignature = param.Signature,
         };
 
         var requiredFoods = new List<Cell>();
         var walked = new HashSet<Cell> { spawn };
         var trailOrder = new List<Cell>();
-        if (!RandomWalk(spec, rng, targetSteps, requiredFoods, walked, out List<char> dirs, out Cell head, trailOrder))
+        if (!RandomWalk(spec, rng, targetSteps, requiredFoods, walked, out List<char> dirs,
+                out Cell head, trailOrder, param.RequiredFoods + 2))
         {
             return Fail("随机行走失败");
         }
@@ -241,7 +211,7 @@ public partial class RouteFirstGenerator : RefCounted
         string route = new(dirs.ToArray());
 
         // 路线确定后放机关：蓝噪声撒点 + 时间窗验证；极端地形放不下时允许 0 机关。
-        int placed = PlaceMechanisms(spec, rng, walked, trailOrder, mechCount);
+        int placed = PlaceMechanisms(spec, rng, walked, trailOrder, mechCount, param.InitialLevels);
         if (placed == 0 && mechCount > 0)
         {
             // 保留关卡可玩性：无机关仍可作为低难度样本，不因放置失败丢弃整张图。
@@ -267,7 +237,7 @@ public partial class RouteFirstGenerator : RefCounted
                 Route = route,
             },
         };
-        result.Score = ComputeScore(spec, route, result.Metrics);
+        result.Score = ComputeScore(spec, route, result.Metrics, BuildScoreOptions(Math.Max(width, height)));
         return result;
     }
 
@@ -276,7 +246,7 @@ public partial class RouteFirstGenerator : RefCounted
     {
         // 由密到疏尝试：先保留较封闭的洞窟；连通分量不够大时提高初始开放率。
         // 长路线（minFloor 大）直接提高初始开放率，减少重试。
-        int[] fills = minFloor >= 24 ? new[] { 60, 64, 68 } : new[] { 52, 56, 60, 64 };
+        int[] fills = minFloor >= 24 ? new[] { 60, 64, 68, 72 } : new[] { 52, 56, 60, 64 };
         foreach (int fill in fills)
         {
             var open = new bool[width, height];
@@ -372,38 +342,53 @@ public partial class RouteFirstGenerator : RefCounted
 
     // ── 机关：蓝噪声撒点 + 时间窗验证（不做逐候选整条重放）────────────
     private static int PlaceMechanisms(LevelSpec spec, DeterministicRng rng, HashSet<Cell> walked,
-        IReadOnlyList<Cell> trailOrder, int count)
+        IReadOnlyList<Cell> trailOrder, int count, IReadOnlyList<int> initialLevels)
     {
         if (count <= 0)
         {
             return 0;
         }
-        var pool = new List<Cell>();
+        var pool = new List<(Cell Cell, int Step)>();
         foreach (Cell c in spec.Floor)
         {
             if (walked.Contains(c) || c.Equals(spec.Spawn) || c.Equals(spec.Goal))
             {
                 continue;
             }
-            bool nearTrail = false;
-            foreach (Cell p in walked)
+            int nearestStep = int.MaxValue;
+            for (int t = 0; t < trailOrder.Count; t++)
             {
-                if (Chebyshev(c, p) <= 1)
+                if (Chebyshev(c, trailOrder[t]) <= 2)
                 {
-                    nearTrail = true;
+                    nearestStep = t;
                     break;
                 }
             }
-            if (nearTrail)
+            if (nearestStep != int.MaxValue)
             {
-                pool.Add(c);
+                pool.Add((c, nearestStep));
             }
         }
-        rng.Shuffle(pool);
+        // 优先路线前段：机关越早出现，时间窗越容易满足，也形成"从起点开始的压力"。
+        pool.Sort((a, b) => a.Step.CompareTo(b.Step));
+        for (int i = 0; i < pool.Count;)
+        {
+            int j = i;
+            while (j < pool.Count && pool[j].Step == pool[i].Step)
+            {
+                j++;
+            }
+            for (int k = j - 1; k > i; k--)
+            {
+                int r = i + rng.NextInt(k - i + 1);
+                (pool[k], pool[r]) = (pool[r], pool[k]);
+            }
+            i = j;
+        }
 
         var state = new RuleState();
         int placed = 0;
-        foreach (Cell c in pool)
+        foreach ((Cell c, int _) in pool)
         {
             if (placed >= count)
             {
@@ -423,8 +408,10 @@ public partial class RouteFirstGenerator : RefCounted
                 continue;
             }
 
+            int initial = placed < initialLevels.Count ? initialLevels[placed] : 0;
+            initial = Math.Clamp(initial, 0, Math.Max(spec.MechanismCap - 1, 0));
             spec.MechCenters.Add(c);
-            spec.MechInitialLevels.Add(0);
+            spec.MechInitialLevels.Add(initial);
             state.ResetToSpec(spec);
             if (ValidateMechanismWindows(spec, state, trailOrder))
             {
@@ -465,7 +452,7 @@ public partial class RouteFirstGenerator : RefCounted
     // ── 随机规则行走：相位排花，不做"濒死回填 + 整条重放" ─────────────
     private static bool RandomWalk(LevelSpec spec, DeterministicRng rng, int targetSteps,
         List<Cell> requiredFoods, HashSet<Cell> walked, out List<char> dirs, out Cell head,
-        List<Cell> trailOrder)
+        List<Cell> trailOrder, int foodBudget)
     {
         dirs = new List<char>(targetSteps);
         trailOrder.Clear();
@@ -476,7 +463,6 @@ public partial class RouteFirstGenerator : RefCounted
         st.Setup(spec);
         st.Start();
 
-        int foodBudget = 2 + targetSteps;
         int inserted = 0;
 
         for (int step = 0; step < targetSteps; step++)
@@ -628,9 +614,43 @@ public partial class RouteFirstGenerator : RefCounted
         return st.Head.Equals(st.Goal);
     }
 
-    private static LevelScore ComputeScore(LevelSpec spec, string route, Dictionary<string, double> metrics)
+    /// <summary>
+    /// 尺寸降级矩阵（S3 起）：小图完整算 C 类；18/20 关闭 M14/M16 以守住预算。
+    /// Top-K 数量在 S5 的 MAP-Elites 中落地，这里先控制评分开销。
+    /// </summary>
+    private static MetricOptions BuildScoreOptions(int maxSize)
     {
-        MetricVector vector = MetricExtractor.Extract(spec, route, ScoreOptions);
+        if (maxSize <= 14)
+        {
+            return new MetricOptions
+            {
+                FunnelNodeBudget = 600,
+                FunnelMaxCount = 200,
+                SolveNodeBudget = 12_000,
+            };
+        }
+        if (maxSize <= 16)
+        {
+            return new MetricOptions
+            {
+                FunnelNodeBudget = 400,
+                FunnelMaxCount = 120,
+                SolveNodeBudget = 10_000,
+            };
+        }
+        return new MetricOptions
+        {
+            EnableFalseAffordance = false,
+            EnableFunnel = false,
+            EnableNaiveStrategies = true,
+            SolveNodeBudget = 8_000,
+        };
+    }
+
+    private static LevelScore ComputeScore(LevelSpec spec, string route,
+        Dictionary<string, double> metrics, MetricOptions options)
+    {
+        MetricVector vector = MetricExtractor.Extract(spec, route, options);
         int difficulty = ScoreSpline.Default.InterpolateRounded(vector.DRaw);
         Dictionary<string, double> values = vector.ToDictionary();
         foreach (KeyValuePair<string, double> kv in values)

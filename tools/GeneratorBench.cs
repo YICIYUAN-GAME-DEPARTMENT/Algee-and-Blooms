@@ -35,8 +35,8 @@ public partial class GeneratorBench : Node
         string[] tiers = GetString(args, "tiers", "easy,normal,hard")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         string outDir = GetString(args, "out", "res://tests/fixtures/bench");
-        int width = GetInt(args, "width", 12);
-        int height = GetInt(args, "height", 12);
+        int width = GetInt(args, "width", 0);
+        int height = GetInt(args, "height", 0);
         int candidates = GetInt(args, "candidates", 1);
         int maxAttempts = GetInt(args, "attempts", 32);
         int genver = GetInt(args, "genver", GeneratorVersion);
@@ -59,6 +59,7 @@ public partial class GeneratorBench : Node
         int ok = 0;
         int failed = 0;
         bool determinismOk = true;
+        var sizeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (string tier in tiers)
         {
@@ -107,6 +108,12 @@ public partial class GeneratorBench : Node
 
                 bool replayOk = Replay(specJson, result.Solution.Route);
                 row["status"] = replayOk ? "ok" : "replay_fail";
+                row["width"] = result.Spec.Width;
+                row["height"] = result.Spec.Height;
+                row["schema_version"] = result.Spec.SchemaVersion;
+                row["tier_label"] = result.Spec.Tier;
+                row["param_signature"] = result.Spec.ParamSignature;
+                row["target_score"] = result.Spec.TargetScore;
                 row["attempts_used"] = result.Attempts;
                 row["steps"] = result.Solution.Steps;
                 row["floor_count"] = result.Spec.Floor.Count;
@@ -124,6 +131,8 @@ public partial class GeneratorBench : Node
                     ok++;
                     tierOk++;
                     perTier[tier].Add(result.Score?.Difficulty ?? 0);
+                    string sizeKey = $"{result.Spec.Width}x{result.Spec.Height}";
+                    sizeCounts[sizeKey] = sizeCounts.TryGetValue(sizeKey, out int sc) ? sc + 1 : 1;
                 }
                 else
                 {
@@ -172,6 +181,7 @@ public partial class GeneratorBench : Node
             },
             ["per_tier"] = PerTierJson(perTier),
             ["score_hist"] = ScoreHistJson(perTier),
+            ["size_hist"] = SizeHistJson(sizeCounts),
         };
 
         string benchPath = outDir.TrimEnd('/') + $"/bench_gv{genver}.json";
@@ -262,6 +272,16 @@ public partial class GeneratorBench : Node
         foreach (KeyValuePair<int, int> kv in counts)
         {
             obj[$"{kv.Key}-{kv.Key + 9}"] = kv.Value;
+        }
+        return obj;
+    }
+
+    private static JsonObject SizeHistJson(Dictionary<string, int> counts)
+    {
+        var obj = new JsonObject();
+        foreach (KeyValuePair<string, int> kv in counts.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            obj[kv.Key] = kv.Value;
         }
         return obj;
     }
