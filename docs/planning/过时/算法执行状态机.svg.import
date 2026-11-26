@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://demt2iibo356d"
-path="res://.godot/imported/算法执行状态机.svg-72fc74df0752185043763f50435af3cb.ctex"
+path="res://.godot/imported/算法执行状态机.svg-97fcdb0b0f123b3ad6d4fa8fac0fe258.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/planning/算法执行状态机.svg"
-dest_files=["res://.godot/imported/算法执行状态机.svg-72fc74df0752185043763f50435af3cb.ctex"]
+source_file="res://docs/planning/过时/算法执行状态机.svg"
+dest_files=["res://.godot/imported/算法执行状态机.svg-97fcdb0b0f123b3ad6d4fa8fac0fe258.ctex"]
 
 [params]
 

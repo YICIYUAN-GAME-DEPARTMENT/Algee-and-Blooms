@@ -63,10 +63,10 @@
 | 引入外部代码 / 插件 / 素材 / 字体，或方案不确定 | 技能 [research-first](docs/agents/skills/research-first.md)（先调研 + 许可证判定，再确认） |
 | 跑 `tools/`、headless 生成 / 迁移 / 验证、瓦片贴图 | 技能 [godot-tooling](docs/agents/skills/godot-tooling.md)（**先读，防坑**） |
 | 跨模块 / 架构改动、不确定"该怎么做" | 技能 [architect](docs/agents/skills/architect.md) + [架构说明](docs/architecture/架构说明.md) + 开发文档 §2.3 扩展点 |
-| C# 规则 / 算法 / 求解器 / 生成器 / 评分 | [正式上线待办](docs/planning/正式上线待办.md) + [架构说明](docs/architecture/架构说明.md) §1.1 + [coding-rules.md](docs/agents/rules/coding-rules.md) |
+| C# 规则 / 算法 / 求解器 / 生成器 / 评分 | [随机关卡算法 v4](docs/planning/随机关卡算法v4-整体改造方案.md) + [正式上线待办](docs/planning/正式上线待办.md) + [架构说明](docs/architecture/架构说明.md) §1.1 + [coding-rules.md](docs/agents/rules/coding-rules.md) |
 | PR 前回归 / 疑难 bug / 导出验证 | 功能需求 §8 验收（C-通用 / C-Lnn）+ 技能 [qa](docs/agents/skills/qa.md) |
 | 写提交信息草稿 | [collaboration-rules.md](docs/agents/rules/collaboration-rules.md) §2 + 开发文档 §7 |
-| 正式上线 / 生成器 / 求解器等规划 | [正式上线待办](docs/planning/正式上线待办.md)（规划稿；权威口径仍以两本主文档为准） |
+| 正式上线 / 生成器 / 求解器等规划 | [正式上线待办](docs/planning/正式上线待办.md) + [随机关卡算法 v4](docs/planning/随机关卡算法v4-整体改造方案.md)（规划稿；权威口径仍以两本主文档为准） |
 | 定位某条规则的设计原文 | 本文件 §4「文档索引映射」 |
 
 ---
@@ -146,7 +146,8 @@
 | [docs/development/环境搭建指南.md](docs/development/环境搭建指南.md) | 新成员环境配置、Godot / Git LFS 安装 |
 | [docs/development/关卡制作指南.md](docs/development/关卡制作指南.md) | 设计者：新建 / 摆放 / 校验关卡 |
 | [docs/planning/正式上线待办.md](docs/planning/正式上线待办.md) | 正式上线路线、算法核心与 P0/P1/P2 待办（**规划稿，非权威**） |
-| [docs/planning/生成器算法规划.md](docs/planning/生成器算法规划.md) | 评分 v2 量化指标与锚点、目标分布、事后标签分类、参数可行域、生成管线与分档预算、S1–S7 里程碑（**规划稿，非权威**） |
+| [docs/planning/随机关卡算法v4-整体改造方案.md](docs/planning/随机关卡算法v4-整体改造方案.md) | 随机关卡生成 / 评分 / 验证整体改造：双引擎（结构图 + 噪波负型）、设计公平门、节点抽象、纯路线高难（**规划稿，非权威**） |
+| [docs/planning/过时/](docs/planning/过时/) | v3 生成 / 评分 / 自由模式 / 开发索引 / 评分训练集 / 状态机等历史规划稿（**已过时**） |
 | [docs/agents/rules/coding-rules.md](docs/agents/rules/coding-rules.md) | 编码规范（GDScript / 信号 / 网格判定 / 禁止项） |
 | [docs/agents/rules/collaboration-rules.md](docs/agents/rules/collaboration-rules.md) | 分支 / 提交 / PR / LFS / `.tscn` 冲突 |
 | [docs/agents/skills/](docs/agents/skills/) | 8 个技能（见 §3） |
@@ -260,3 +261,4 @@
 | 2026-11-24 | 技术栈同步（正式上线）：确认 GDScript 引擎层 + Rust 算法核心、GUT 9.7.1 测试；补 native/ 模块、路由、角色与纪律 | 架构组 |
 | 2026-11-24 | 架构再定稿：规则单一权威迁入 C#（项目内 `Scripts/Algorithms/`），`LevelState.gd` 退化为适配层；取消独立 `.Core`/`.Cli` 与 xUnit，测试全部改为引擎内 headless（C# 断言场景 + GUT） | 架构组 |
 | 2026-11-25 | 文档同步现状：仓库未引入 GUT（无 `addons/gut/`），测试统一为 `tests/core/` C# 断言场景 + `tests/fixtures/`；修正 §4.4 规则层表述（`LevelState.gd` 为适配层，规则在 C#）；生成器样本关移至 `WIP/` | 架构组 |
+| 2026-11-26 | 新增随机关卡算法 v4 整体改造方案；v3 生成 / 评分 / 自由模式 / 训练集 / 状态机等规划稿移入 `docs/planning/过时/`；同步规划稿索引 | 架构组 |

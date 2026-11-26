@@ -164,7 +164,8 @@ public partial class RuleState : RefCounted
         for (int i = 0; i < _mechCenters.Count; i++)
         {
             int a = i < spec.MechInitialLevels.Count ? spec.MechInitialLevels[i] : 0;
-            a = Math.Clamp(a, 0, _maxMechanismLevel);
+            // 允许负初始阶段（最低 MechanicShapes.MinLevel）：负值不覆盖任何格，只作生长倒计时。
+            a = Math.Clamp(a, MechanicShapes.MinLevel, _maxMechanismLevel);
             _mechInitialLevels.Add(a);
             _gMax = Math.Max(_gMax, _maxMechanismLevel - a);
         }
@@ -392,12 +393,27 @@ public partial class RuleState : RefCounted
 
     public int GetMaxMechLevel()
     {
-        int lv = 0;
+        if (_mechInitialLevels.Count == 0)
+        {
+            return 0;
+        }
+        int lv = int.MinValue;
         foreach (int a in _mechInitialLevels)
         {
             lv = Math.Max(lv, Math.Min(a + _g, _maxMechanismLevel));
         }
         return lv;
+    }
+
+    /// <summary>各机关当前阶段（按中心顺序；负值表示尚未激活）。</summary>
+    public Godot.Collections.Array GetMechLevels()
+    {
+        var levels = new Godot.Collections.Array();
+        foreach (int a in _mechInitialLevels)
+        {
+            levels.Add(Math.Min(a + _g, _maxMechanismLevel));
+        }
+        return levels;
     }
 
     public bool HasMechanisms()

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using Growth.Algorithms.Generation;
 
 namespace Growth.Algorithms.Search;
 
@@ -162,6 +163,11 @@ public sealed class BoundedRouteEnumerator
         }
         _nodes++;
         if (_nodes > _nodeBudget)
+        {
+            _truncated = true;
+            return;
+        }
+        if ((_nodes & 0x1FF) == 0 && GenerationTrace.Expired)
         {
             _truncated = true;
             return;

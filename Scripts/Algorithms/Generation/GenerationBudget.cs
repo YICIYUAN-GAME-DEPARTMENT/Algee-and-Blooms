@@ -33,6 +33,9 @@ public sealed class GenerationBudget
     /// <summary>每个候选的成功构建次数上限；0 = 沿用 GeneratorConfig。</summary>
     public int MaxSearchAttempts { get; set; }
 
+    /// <summary>单次构建尝试的时间片上限（毫秒，0 = 不限）；超时由生成器协作中止并换下一次尝试。</summary>
+    public double AttemptMilliseconds { get; set; }
+
     public static GenerationBudget Unlimited()
     {
         return new GenerationBudget();
@@ -44,19 +47,25 @@ public sealed class GenerationBudget
         {
             GenerationBudgetTier.Bootstrap => new GenerationBudget
             {
-                MaxUnits = 12, MaxMilliseconds = 120, MaxCandidates = 1, MaxSearchAttempts = 4,
+                MaxUnits = 80, MaxMilliseconds = 4000, MaxCandidates = 2, MaxSearchAttempts = 12,
+                AttemptMilliseconds = 300,
             },
             GenerationBudgetTier.Background => new GenerationBudget
             {
-                MaxUnits = 60, MaxMilliseconds = 1500, MaxCandidates = 3, MaxSearchAttempts = 10,
+                MaxUnits = 300, MaxMilliseconds = 8000, MaxCandidates = 4, MaxSearchAttempts = 24,
+                AttemptMilliseconds = 20,
             },
+            // 加载屏生成已移到后台线程：不再靠时间片让出主线程，
+            // 释放为 0（不限单次尝试），避免中途丢弃有效尝试；总预算 / 工作单元仍兜底。
             GenerationBudgetTier.Loading => new GenerationBudget
             {
-                MaxUnits = 600, MaxMilliseconds = 10000, MaxCandidates = 6, MaxSearchAttempts = 24,
+                MaxUnits = 3000, MaxMilliseconds = 90000, MaxCandidates = 8, MaxSearchAttempts = 64,
+                AttemptMilliseconds = 0,
             },
             GenerationBudgetTier.Prefetch => new GenerationBudget
             {
-                MaxUnits = 60, MaxMilliseconds = 1500, MaxCandidates = 2, MaxSearchAttempts = 10,
+                MaxUnits = 200, MaxMilliseconds = 6000, MaxCandidates = 3, MaxSearchAttempts = 16,
+                AttemptMilliseconds = 15,
             },
             _ => new GenerationBudget(),
         };

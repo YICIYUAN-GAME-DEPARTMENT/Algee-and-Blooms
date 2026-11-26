@@ -28,6 +28,10 @@ var main_menu_scene := "res://Scenes/UI/MainMenu.tscn"
 ## 生成模式：关卡由 LevelSpec 运行时重建，不读关卡场景里的手编内容。
 const GENERATED_LEVEL_SCENE := "res://Scenes/Levels/LevelTemplate.tscn"
 const GENERATION_SERVICE_SCRIPT := "res://Scripts/Algorithms/Generation/GenerationService.cs"
+## 生成前先进入加载场景（进度条 + 小游戏）；由 LoadingScreen 分帧驱动生成。
+const LOADING_SCENE := "res://Scenes/UI/LoadingScreen.tscn"
+## 加载阶段换种子重试的最大次数（生成失败 / 分数低于档位下限时）。
+const LOADING_RETRIES := 5
 
 var generated_mode := false
 var generated_seed := 0
@@ -38,12 +42,24 @@ var generated_score := 0
 var generated_score_tier := ""
 var generated_steps := 0
 var generated_tags: Array = []
+## 评分 v3 交互特征（H / Deception / Cuts / Contention / L_tight），写入评分记录
+var generated_features: Dictionary = {}
 var generated_index := 0
 var generated_base_tier := "normal"
+## 每次成功应用生成结果 +1（供 headless smoke 等待异步加载完成）。
+var generated_serial := 0
 var generated_obstacle_model := "poisson"
-var generated_generator_model := "route_first"
+## 默认使用 v3 模板机关生成器；route_first 仅作模板失败时的降级实现
+var generated_generator_model := "template"
+## 生成模式（v3）：template / free / route_first；requested 是 p_free 策略请求值
+var generated_generation_mode := "route_first"
+var generated_template_id := "route_first"
+var generated_requested_mode := "template"
 
 var _generation: RefCounted = null
+var _loading_seed := 0
+var _loading_tier := "normal"
+var _loading_apply_floor := false
 
 
 func _ready() -> void:
@@ -82,7 +98,8 @@ func restart_level() -> void:
 
 # ── 随机关卡（S7）─────────────────────────────────────────────
 ## 主菜单入口：按所选难度/障碍模型/生成模型起步，接力继续沿难度阶梯升档。
-func start_generated_mode(tier: String = "normal", model: String = "", generator: String = "") -> void:
+## 默认走 v3 模板机关生成器（template）；旧路线生成仅作为模板失败时的内部降级。
+func start_generated_mode(tier: String = "normal", model: String = "", generator: String = "template") -> void:
 	generated_base_tier = tier if tier in ["easy", "normal", "hard", "expert"] else "normal"
 	if not model.is_empty():
 		generated_obstacle_model = model
@@ -92,11 +109,11 @@ func start_generated_mode(tier: String = "normal", model: String = "", generator
 	start_generated_level(_random_seed(), generated_base_tier)
 
 
-## 生成并进入一张随机关卡；失败时最多向前重试 3 个种子，仍失败则回主菜单。
+## 请求生成一张随机关卡：先进入加载场景，实际生成由 LoadingScreen 分帧驱动。
 ## reset_progress=true 表示新一轮（主菜单指定种子），会重置接力进度与基准难度。
+## require_floor=false 用于玩家指定种子：优先复现该种子，不做档位下限重试。
 func start_generated_level(seed_value: int, tier: String = "", reset_progress: bool = false,
-		model: String = "", generator: String = "") -> void:
-	generated_mode = true
+		model: String = "", generator: String = "", require_floor: bool = true) -> void:
 	generated_seed = seed_value
 	if not model.is_empty():
 		generated_obstacle_model = model
@@ -107,42 +124,30 @@ func start_generated_level(seed_value: int, tier: String = "", reset_progress: b
 	if reset_progress:
 		generated_index = 0
 		generated_base_tier = generated_tier
-	_ensure_generation_service()
-
-	var data := _request_generated(generated_seed, generated_tier)
-	var apply_floor := not reset_progress
-	if not _generated_acceptable(data, generated_tier, apply_floor):
-		for offset in range(1, 6):
-			var retry_seed := seed_value + offset
-			var retry := _request_generated(retry_seed, generated_tier)
-			if _generated_acceptable(retry, generated_tier, apply_floor):
-				generated_seed = retry_seed
-				data = retry
-				break
-	if not _generated_acceptable(data, generated_tier, apply_floor):
-		push_error("GameManager: 随机关卡生成失败（seed %d / %s）" % [seed_value, generated_tier])
-		generated_mode = false
-		back_to_main_menu()
-		return
-
-	generated_spec_json = str(data.get("spec_json", ""))
-	generated_route = str(data.get("route", ""))
-	generated_score = int(data.get("score", 0))
-	generated_score_tier = str(data.get("score_tier", ""))
-	if generated_score_tier.is_empty():
-		generated_score_tier = _score_tier(generated_score)
-	generated_steps = int(data.get("steps", 0))
-	generated_obstacle_model = str(data.get("obstacle_model", generated_obstacle_model))
-	generated_generator_model = str(data.get("generator_model", generated_generator_model))
-	generated_tags = data.get("tags", [])
-	if typeof(generated_tags) != TYPE_ARRAY:
-		generated_tags = []
-	print("[Generated] seed=%d tier=%s model=%s/%s score=%d(%s) steps=%d" % [
-		generated_seed, generated_tier, generated_generator_model, generated_obstacle_model,
-		generated_score, generated_score_tier, generated_steps])
-	current_level_scene = GENERATED_LEVEL_SCENE
+	_loading_seed = seed_value
+	_loading_tier = generated_tier
+	_loading_apply_floor = require_floor and not reset_progress
 	state = State.PLAYING
-	change_scene(GENERATED_LEVEL_SCENE)
+	change_scene(LOADING_SCENE)
+
+
+## LoadingScreen 读取的生成上下文。
+func loading_context() -> Dictionary:
+	return {
+		"seed": _loading_seed,
+		"tier": _loading_tier,
+		"index": generated_index,
+		"apply_floor": _loading_apply_floor,
+		"retries": LOADING_RETRIES,
+		"obstacle_model": generated_obstacle_model,
+		"generator_model": generated_generator_model,
+	}
+
+
+## 加载屏复用的生成服务（缓存 / 分帧任务）。
+func generation_service() -> RefCounted:
+	_ensure_generation_service()
+	return _generation
 
 
 func _ensure_generation_service() -> void:
@@ -152,14 +157,50 @@ func _ensure_generation_service() -> void:
 	_generation.call("SetupCache", "", 50)
 
 
-func _request_generated(seed_value: int, tier: String) -> Dictionary:
-	_generation.call("SetObstacleModel", generated_obstacle_model)
-	_generation.call("SetGeneratorModel", generated_generator_model)
-	var json := str(_generation.call("GenerateNow", seed_value, tier, "loading"))
-	if json.is_empty():
-		return {}
-	var parsed: Variant = JSON.parse_string(json)
-	return parsed if typeof(parsed) == TYPE_DICTIONARY else {}
+## 加载屏判定：结果是否可用（含档位分数下限）。
+func generated_data_acceptable(data: Dictionary, tier: String, apply_floor: bool) -> bool:
+	return _generated_acceptable(data, tier, apply_floor)
+
+
+## 应用一次成功生成结果并进入关卡；失败返回 false（不切场景）。
+func apply_generated_result(data: Dictionary, seed_value: int) -> bool:
+	if not _generated_ok(data):
+		return false
+	generated_mode = true
+	generated_seed = seed_value
+	generated_serial += 1
+	generated_spec_json = str(data.get("spec_json", ""))
+	generated_route = str(data.get("route", ""))
+	generated_score = int(data.get("score", 0))
+	generated_score_tier = str(data.get("score_tier", ""))
+	if generated_score_tier.is_empty():
+		generated_score_tier = _score_tier(generated_score)
+	generated_steps = int(data.get("steps", 0))
+	generated_obstacle_model = str(data.get("obstacle_model", generated_obstacle_model))
+	generated_generator_model = str(data.get("generator_model", generated_generator_model))
+	generated_generation_mode = str(data.get("generation_mode", "route_first"))
+	generated_template_id = str(data.get("template_id", "route_first"))
+	generated_requested_mode = _requested_mode_for(generated_tier, generated_seed, generated_index)
+	generated_tags = data.get("tags", [])
+	if typeof(generated_tags) != TYPE_ARRAY:
+		generated_tags = []
+	var features: Variant = data.get("features", {})
+	generated_features = features if typeof(features) == TYPE_DICTIONARY else {}
+	print("[Generated] seed=%d tier=%s mode=%s/%s model=%s/%s score=%d(%s) steps=%d" % [
+		generated_seed, generated_tier, generated_generation_mode, generated_template_id,
+		generated_generator_model, generated_obstacle_model,
+		generated_score, generated_score_tier, generated_steps])
+	current_level_scene = GENERATED_LEVEL_SCENE
+	state = State.PLAYING
+	change_scene(GENERATED_LEVEL_SCENE)
+	return true
+
+
+## 加载阶段彻底失败：回主菜单，不留下半成品状态。
+func fail_generated(message: String) -> void:
+	push_error("GameManager: 随机关卡生成失败（%s）" % message)
+	generated_mode = false
+	back_to_main_menu()
 
 
 ## 障碍模型的中文名（HUD 显示用）。
@@ -171,9 +212,17 @@ func generated_model_label() -> String:
 	}.get(generated_obstacle_model, "Poisson 簇")
 
 
-## 生成模型的中文名（HUD 显示用）。
+## 生成模型的中文名（HUD 显示用）；按实际结果标注模板 / 链式降级。
 func generated_generator_label() -> String:
-	return "黏菌枝干" if generated_generator_model == "physarum" else "经典路线"
+	if generated_generation_mode == "fallback_physarum":
+		return "黏菌枝干（模板降级）"
+	if generated_generation_mode == "fallback":
+		return "经典路线（模板降级）"
+	if generated_generation_mode == "template":
+		if not generated_template_id.is_empty():
+			return "模板机关 %s" % generated_template_id
+		return "模板机关"
+	return {"physarum": "黏菌枝干", "template": "模板机关"}.get(generated_generator_model, "经典路线")
 
 
 ## 原始分刻度 → 难度档（与 C# BranchScoreSchemes 保持一致）。
@@ -192,9 +241,9 @@ func _generated_ok(data: Dictionary) -> bool:
 			and not str(data.get("spec_json", "")).is_empty()
 
 
-## 随机接力时按档位设置分数下限，把左尾低分图挡掉，让分布集中在 Hard 附近。
+## 随机接力时按档位设置分数下限；与 BranchScoreSchemes 的档位阈值对齐（Easy<35 / Normal<48 / Hard<60）。
 func _score_floor(tier: String) -> int:
-	return {"normal": 30, "hard": 45, "expert": 48}.get(tier, 0)
+	return {"normal": 35, "hard": 48, "expert": 58}.get(tier, 0)
 
 
 func _generated_acceptable(data: Dictionary, tier: String, apply_floor: bool) -> bool:
@@ -213,6 +262,20 @@ func _generated_acceptable(data: Dictionary, tier: String, apply_floor: bool) ->
 
 func _random_seed() -> int:
 	return int(Time.get_ticks_usec() % 1_000_000_000) + 1
+
+
+## v3 生成模式策略：模板为主，按 p_free 周期性走自由模式；每 5 关保底 1 次
+func _requested_mode_for(tier: String, seed_value: int, index: int) -> String:
+	if index % 5 == 4:
+		return "free"
+	var p_free: float = {
+		"easy": 0.10,
+		"normal": 0.15,
+		"hard": 0.25,
+		"expert": 0.30,
+	}.get(tier, 0.15)
+	var roll := int(abs(hash("%d:%d" % [seed_value, index])) % 1000)
+	return "free" if roll < int(p_free * 1000.0) else "template"
 
 
 ## 接力难度曲线：以起始档为基准，每 3 关升一档（最高 expert）。
@@ -243,12 +306,20 @@ func _run_generated_smoke() -> void:
 	start_generated_level(20261125, generated_tier, true,
 		generated_obstacle_model, generated_generator_model)
 	for index in range(4):
-		await get_tree().process_frame
-		await get_tree().process_frame
-		var scene := get_tree().current_scene
-		var level_state: Variant = scene.get("state") if scene != null else null
+		# 生成已改为「加载场景 + 分帧」，这里等异步结果：serial 变化且关卡 state 就绪。
+		var seen_serial := generated_serial
+		var level_state: Variant = null
+		var deadline := Time.get_ticks_msec() + 60000
+		while Time.get_ticks_msec() < deadline:
+			await get_tree().process_frame
+			if generated_serial == seen_serial:
+				continue
+			var scene := get_tree().current_scene
+			if scene != null and scene.get("state") != null:
+				level_state = scene.get("state")
+				break
 		if level_state == null:
-			push_error("[Smoke] 第 %d 关没有 LevelState" % index)
+			push_error("[Smoke] 第 %d 关加载超时或未生成 LevelState" % index)
 			get_tree().quit(1)
 			return
 		var accepted_all := true
@@ -280,6 +351,7 @@ func _run_generated_smoke() -> void:
 func back_to_level_select() -> void:
 	generated_mode = false
 	generated_spec_json = ""
+	generated_features = {}
 	state = State.MENU
 	change_scene(level_select_scene)
 
@@ -287,6 +359,7 @@ func back_to_level_select() -> void:
 func back_to_main_menu() -> void:
 	generated_mode = false
 	generated_spec_json = ""
+	generated_features = {}
 	state = State.MENU
 	change_scene(main_menu_scene)
 
@@ -347,6 +420,20 @@ func start_next_level() -> void:
 		start_level(levels[idx + 1].path)
 	else:
 		back_to_level_select()
+
+
+## 结算 / 暂停界面的"下一关"：可指定下一关难度与种子（seed<=0 = 随机）。
+## 手编关卡忽略难度 / 种子，仍按列表下一位；指定种子时优先复现、不做档位下限重试。
+func start_next_level_with(tier: String = "", seed_value: int = 0) -> void:
+	if not generated_mode:
+		start_next_level()
+		return
+	generated_index += 1
+	generated_tier = tier if tier in ["easy", "normal", "hard", "expert"] \
+			else _tier_for_generated_index(generated_index)
+	var explicit_seed := seed_value > 0
+	start_generated_level(seed_value if explicit_seed else _random_seed(), generated_tier,
+			false, "", "", not explicit_seed)
 
 
 # ── 场景流转 ───────────────────────────────────────────────────

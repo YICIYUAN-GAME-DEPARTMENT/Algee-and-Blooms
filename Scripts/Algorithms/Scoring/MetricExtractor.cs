@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using Growth.Algorithms.Generation;
 
 namespace Growth.Algorithms.Scoring;
 
@@ -319,7 +320,7 @@ public static class MetricExtractor
             int considered = 0;
             foreach (Cell food in spec.Foods)
             {
-                if (considered >= 8)
+                if (considered >= 8 || GenerationTrace.Expired)
                 {
                     break;
                 }
@@ -417,6 +418,11 @@ public static class MetricExtractor
 
         foreach (Cell food in spec.Foods)
         {
+            if (GenerationTrace.Expired)
+            {
+                estimated = true;
+                break;
+            }
             if (eatenFoods.Contains(food))
             {
                 continue;

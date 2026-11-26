@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://bq7jowfomnnco" path="res://Art/UI/MainMenu_Bg.png" id="3_t6w0q"]
 [ext_resource type="Theme" uid="uid://k3r1m0vyqv5q" path="res://UI/Theme/GardenTheme.tres" id="3_theme"]
 [ext_resource type="Script" uid="uid://dqob88e71yqmj" path="res://Scripts/UI/JuicyButton.gd" id="4_button"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/SettingsOverlay.tscn" id="5_settings"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_jex3y"]
 
@@ -132,9 +133,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -560.0
-offset_top = -29.0
+offset_top = -144.0
 offset_right = -244.0
-offset_bottom = 241.0
+offset_bottom = 144.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_type_variation = &"GardenPanel"
@@ -164,66 +165,7 @@ layout_mode = 2
 text = "随机关卡"
 script = ExtResource("4_button")
 
-[node name="TierRow" type="HBoxContainer" parent="MenuFrame/Margin/Content" unique_id=1316976112]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="TierLabel" type="Label" parent="MenuFrame/Margin/Content/TierRow" unique_id=1316976113]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-text = "难度"
-vertical_alignment = 1
-
-[node name="TierOption" type="OptionButton" parent="MenuFrame/Margin/Content/TierRow" unique_id=1316976114]
-custom_minimum_size = Vector2(232, 44)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="ModelRow" type="HBoxContainer" parent="MenuFrame/Margin/Content"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="ModelLabel" type="Label" parent="MenuFrame/Margin/Content/ModelRow"]
-custom_minimum_size = Vector2(30, 0)
-layout_mode = 2
-text = "障碍"
-vertical_alignment = 1
-
-[node name="ModelOption" type="OptionButton" parent="MenuFrame/Margin/Content/ModelRow"]
-custom_minimum_size = Vector2(104, 44)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="GenLabel" type="Label" parent="MenuFrame/Margin/Content/ModelRow"]
-custom_minimum_size = Vector2(30, 0)
-layout_mode = 2
-text = "生成"
-vertical_alignment = 1
-
-[node name="GeneratorOption" type="OptionButton" parent="MenuFrame/Margin/Content/ModelRow"]
-custom_minimum_size = Vector2(104, 44)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="SeedRow" type="HBoxContainer" parent="MenuFrame/Margin/Content" unique_id=1316976109]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="SeedInput" type="LineEdit" parent="MenuFrame/Margin/Content/SeedRow" unique_id=1316976110]
-custom_minimum_size = Vector2(170, 46)
-layout_mode = 2
-size_flags_horizontal = 3
-placeholder_text = "输入种子"
-max_length = 10
-
-[node name="SeedStartButton" type="Button" parent="MenuFrame/Margin/Content/SeedRow" unique_id=1316976111]
-custom_minimum_size = Vector2(122, 46)
-layout_mode = 2
-text = "按种子开始"
-script = ExtResource("4_button")
-
 [node name="SettingsButton" type="Button" parent="MenuFrame/Margin/Content" unique_id=1616432765]
-visible = false
 custom_minimum_size = Vector2(300, 60)
 layout_mode = 2
 text = "设置"
@@ -235,59 +177,4 @@ layout_mode = 2
 text = "退出"
 script = ExtResource("4_button")
 
-[node name="SettingsOverlay" type="Control" parent="." unique_id=282495872]
-visible = false
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="Dim" type="ColorRect" parent="SettingsOverlay" unique_id=303446361]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(0.075, 0.18, 0.118, 0.62)
-
-[node name="Center" type="CenterContainer" parent="SettingsOverlay" unique_id=862025644]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="Panel" type="PanelContainer" parent="SettingsOverlay/Center" unique_id=893804645]
-custom_minimum_size = Vector2(520, 260)
-layout_mode = 2
-theme_type_variation = &"ResultPanel"
-
-[node name="Content" type="VBoxContainer" parent="SettingsOverlay/Center/Panel" unique_id=972321016]
-layout_mode = 2
-theme_override_constants/separation = 14
-
-[node name="Title" type="Label" parent="SettingsOverlay/Center/Panel/Content" unique_id=1053647233]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.169, 0.357, 0.243, 1)
-theme_override_font_sizes/font_size = 30
-text = "设置"
-horizontal_alignment = 1
-
-[node name="Divider" type="HSeparator" parent="SettingsOverlay/Center/Panel/Content" unique_id=1460289908]
-layout_mode = 2
-
-[node name="FullscreenButton" type="Button" parent="SettingsOverlay/Center/Panel/Content" unique_id=247609520]
-custom_minimum_size = Vector2(350, 54)
-layout_mode = 2
-text = "全屏: 关"
-script = ExtResource("4_button")
-
-[node name="BackButton" type="Button" parent="SettingsOverlay/Center/Panel/Content" unique_id=789259346]
-custom_minimum_size = Vector2(350, 54)
-layout_mode = 2
-text = "返回"
-script = ExtResource("4_button")
+[node name="SettingsOverlay" parent="." instance=ExtResource("5_settings")]

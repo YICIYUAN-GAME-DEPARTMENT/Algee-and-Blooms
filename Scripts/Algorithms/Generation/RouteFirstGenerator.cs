@@ -26,6 +26,14 @@ public sealed class GeneratorConfig
     public ObstacleModel ObstacleModel { get; set; } = ObstacleModel.BlueNoise;
     /// <summary>生成模型（v5 原型）：经典路线优先 / 黏菌枝干。</summary>
     public GeneratorModel GeneratorModel { get; set; } = GeneratorModel.RouteFirst;
+    /// <summary>模板 id（仅 TemplateField 使用；空 = 按档位采样）。</summary>
+    public string TemplateId { get; set; } = "";
+    /// <summary>v4 调度来源（structured / noise / hybrid）；空 = 由生成引擎推导。</summary>
+    public string GenerationSource { get; set; } = "";
+    /// <summary>当前关卡序号（Portfolio 用 hash(seed, index) 选择引擎）。</summary>
+    public int LevelIndex { get; set; }
+    /// <summary>是否对最终 Top-K 候选执行设计公平门（G3）。</summary>
+    public bool EnableFairnessGate { get; set; } = true;
 }
 
 /// <summary>生成结果（成功时携带完整 LevelSpec、规范路线与评分）。</summary>
@@ -37,6 +45,10 @@ public sealed class GenerationResult
     public LevelScore Score { get; set; }
     public Dictionary<string, double> Metrics { get; set; } = new();
     public string Reason { get; set; } = "";
+    /// <summary>实际生成模式：template / fallback / route_first。</summary>
+    public string GenerationMode { get; set; } = "route_first";
+    /// <summary>模板 id（模板 / 降级时填写）。</summary>
+    public string TemplateId { get; set; } = "route_first";
     public int Attempts { get; set; }
     /// <summary>本次生成的目标步数（真实最短路）。</summary>
     public int TargetSteps { get; set; }
@@ -355,6 +367,7 @@ public partial class RouteFirstGenerator : RefCounted
         {
             return Fail(baseReason);
         }
+        GenerationTrace.Report("地形与障碍");
         List<Cell> floor = layout.Floor;
         List<Cell> obstacles = layout.Obstacles;
         GridModel grid = layout.Grid;
@@ -444,6 +457,7 @@ public partial class RouteFirstGenerator : RefCounted
         AddDecoyFoods(rng, spec, walked, route.Length, decoyMin, 2);
 
         // v3：用精确求解器的最短路作为规范路线（真实难度）；UNKNOWN 的 hard/expert 候选直接丢弃。
+        GenerationTrace.Report("精确求解");
         int solveStates = 0;
         RuleState solveState = GetSolveState();
         solveState.Setup(spec);
@@ -470,15 +484,51 @@ public partial class RouteFirstGenerator : RefCounted
             return Fail("精确求解超预算");
         }
 
+        // v4 结构注入（最小版）：在规范路线旁加 1–2 个死胡同假岔路，末端放花瓣制造“看起来更近”的诱饵。
+        // 死胡同只与路线单点相连，理论上不改变最短路；仍用一次重解兜底，异常时回滚。
+        int injectedForks = 0;
+        int forkTarget = cfg.Difficulty switch
+        {
+            "expert" => 2,
+            "hard" => 1,
+            _ => 0,
+        };
+        if (forkTarget > 0)
+        {
+            int floorBefore = spec.Floor.Count;
+            var foodsBefore = new List<Cell>(spec.Foods);
+            injectedForks = InjectDeadEndForks(rng, spec, route, forkTarget);
+            if (injectedForks > 0)
+            {
+                GenerationTrace.Report("结构复核");
+                RuleState checkState = GetProbeState();
+                checkState.Setup(spec);
+                checkState.Start();
+                Godot.Collections.Dictionary recheck = GetSolver().Solve(checkState, 1_200_000);
+                bool ok = recheck["status"].AsString() == "SOLVABLE"
+                    && recheck["steps"].AsInt32() == route.Length;
+                if (!ok)
+                {
+                    spec.Floor.RemoveRange(floorBefore, spec.Floor.Count - floorBefore);
+                    spec.Foods.Clear();
+                    spec.Foods.AddRange(foodsBefore);
+                    injectedForks = 0;
+                }
+            }
+        }
+
         if (!ReplayVerify(spec, route))
         {
             return Fail("路线重放失败");
         }
 
+        GenerationTrace.Report("评分");
         var result = new GenerationResult
         {
             Success = true,
             Spec = spec,
+            GenerationMode = "route_first",
+            TemplateId = "route_first",
             Solution = new LevelSolution
             {
                 Status = "SOLVABLE",
@@ -488,6 +538,11 @@ public partial class RouteFirstGenerator : RefCounted
         };
         result.Score = ComputeScore(spec, route, result.Metrics,
             BuildScoreOptions(Math.Max(width, height)), solveStates);
+        if (injectedForks > 0)
+        {
+            result.Metrics["injected_forks"] = injectedForks;
+            result.Score.Metrics["injected_forks"] = injectedForks;
+        }
         return result;
     }
 
@@ -507,6 +562,10 @@ public partial class RouteFirstGenerator : RefCounted
         var noMech = new HashSet<Cell>();
         for (int i = 2; i < path.Count - 1; i++)
         {
+            if (GenerationTrace.Expired)
+            {
+                return Cell.Zero;
+            }
             Cell c = path[i];
             if (c.Equals(spawn) || c.Equals(goal))
             {
@@ -544,6 +603,10 @@ public partial class RouteFirstGenerator : RefCounted
         int shifted = 0;
         for (int i = spec.Foods.Count - 1; i >= 0 && shifted < 2; i--)
         {
+            if (GenerationTrace.Expired)
+            {
+                break;
+            }
             Cell food = spec.Foods[i];
             if (!walked.Contains(food))
             {
@@ -605,7 +668,7 @@ public partial class RouteFirstGenerator : RefCounted
     }
 
     /// <summary>出生点候选：优先远离地形质心的外围格（随机打散前 32 个）。</summary>
-    private static List<Cell> PeripheralSpawns(IReadOnlyList<Cell> floor, DeterministicRng rng)
+    internal static List<Cell> PeripheralSpawns(IReadOnlyList<Cell> floor, DeterministicRng rng)
     {
         double cx = 0;
         double cy = 0;
@@ -899,6 +962,10 @@ public partial class RouteFirstGenerator : RefCounted
         int placed = 0;
         for (int seg = 0; seg < segments && placed < count; seg++)
         {
+            if (GenerationTrace.Expired)
+            {
+                break;
+            }
             foreach ((Cell c, int _) in buckets[seg])
             {
                 if (TryPlaceMechanism(spec, state, trailOrder, c, placed, initialLevels))
@@ -913,7 +980,7 @@ public partial class RouteFirstGenerator : RefCounted
             rng.Shuffle(pool);
             foreach ((Cell c, int _) in pool)
             {
-                if (placed >= count)
+                if (placed >= count || GenerationTrace.Expired)
                 {
                     break;
                 }
@@ -937,7 +1004,7 @@ public partial class RouteFirstGenerator : RefCounted
             }
         }
         int initial = index < initialLevels.Count ? initialLevels[index] : 0;
-        initial = Math.Clamp(initial, 0, Math.Max(spec.MechanismCap - 1, 0));
+        initial = Math.Clamp(initial, MechanicShapes.MinLevel, Math.Max(spec.MechanismCap - 1, 0));
         spec.MechCenters.Add(c);
         spec.MechInitialLevels.Add(initial);
         state.ResetToSpec(spec);
@@ -1031,6 +1098,228 @@ public partial class RouteFirstGenerator : RefCounted
         {
             spec.Foods.Add(pool[i]);
         }
+    }
+
+    // ── v4 结构注入 ──────────────────────────────────────────
+    /// <summary>
+    /// 在规范路线旁开 1–maxForks 个死胡同假岔路，末端放一片花瓣当诱饵。
+    /// 只开“与路线单点相连、4 邻域不碰其它地板”的格，保证不会形成环路或意外捷径；
+    /// 返回实际注入数量。纯确定性，调用方负责在异常时回滚。
+    /// </summary>
+    internal static int InjectDeadEndForks(DeterministicRng rng, LevelSpec spec,
+        string canonicalRoute, int maxForks)
+    {
+        if (spec == null || rng == null || maxForks <= 0 || string.IsNullOrEmpty(canonicalRoute))
+        {
+            return 0;
+        }
+        List<Cell> routeCells = RouteCellsFrom(spec, canonicalRoute);
+        if (routeCells.Count < 4)
+        {
+            return 0;
+        }
+        var floor = new HashSet<Cell>(spec.Floor);
+        var obstacles = new HashSet<Cell>(spec.Obstacles);
+        var foods = new HashSet<Cell>(spec.Foods);
+        Cell[] dirs =
+        {
+            new(1, 0), new(-1, 0), new(0, 1), new(0, -1),
+        };
+
+        var candidates = new List<ForkCandidate>();
+        for (int i = 1; i < routeCells.Count - 1; i++)
+        {
+            Cell attach = routeCells[i];
+            if (attach.Equals(spec.Spawn) || attach.Equals(spec.Goal))
+            {
+                continue;
+            }
+            for (int di = 0; di < dirs.Length; di++)
+            {
+                Cell dir = dirs[di];
+                Cell c1 = new(attach.X + dir.X, attach.Y + dir.Y);
+                if (!IsForkCell(c1, spec, floor, obstacles, foods))
+                {
+                    continue;
+                }
+                var allowed = new HashSet<Cell> { attach };
+                if (TouchesOtherFloor(c1, floor, allowed))
+                {
+                    continue;
+                }
+                // 只注入深度 2 的死胡同：来回 4 步，吃诱饵后必然超过规范解 +2 步，
+                // 才能作为“必败诱饵”通过严格公平门；深度 1 会天然是“无害诱饵”。
+                Cell deepest = new(attach.X + dir.X * 2, attach.Y + dir.Y * 2);
+                if (!IsForkCell(deepest, spec, floor, obstacles, foods))
+                {
+                    continue;
+                }
+                allowed.Add(c1);
+                if (TouchesOtherFloor(deepest, floor, allowed))
+                {
+                    continue;
+                }
+                int score = 8;
+                int dot = (spec.Goal.X - attach.X) * dir.X + (spec.Goal.Y - attach.Y) * dir.Y;
+                if (dot > 0)
+                {
+                    score += 3;
+                }
+                candidates.Add(new ForkCandidate(attach, c1, deepest, 2, deepest, score));
+            }
+        }
+        candidates.Sort((a, b) =>
+        {
+            int cmp = b.Score.CompareTo(a.Score);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+            cmp = a.Attach.Y.CompareTo(b.Attach.Y);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+            cmp = a.Attach.X.CompareTo(b.Attach.X);
+            return cmp != 0 ? cmp : a.C1.Y != b.C1.Y
+                ? a.C1.Y.CompareTo(b.C1.Y)
+                : a.C1.X.CompareTo(b.C1.X);
+        });
+
+        var usedAttach = new List<Cell>();
+        int placed = 0;
+        foreach (ForkCandidate candidate in candidates)
+        {
+            if (placed >= maxForks)
+            {
+                break;
+            }
+            if (NearAny(candidate.Attach, usedAttach, 3))
+            {
+                continue;
+            }
+            var allowed = new HashSet<Cell> { candidate.Attach };
+            if (!IsForkCell(candidate.C1, spec, floor, obstacles, foods)
+                || TouchesOtherFloor(candidate.C1, floor, allowed))
+            {
+                continue;
+            }
+            if (candidate.Depth == 2)
+            {
+                allowed.Add(candidate.C1);
+                if (!IsForkCell(candidate.C2, spec, floor, obstacles, foods)
+                    || TouchesOtherFloor(candidate.C2, floor, allowed))
+                {
+                    continue;
+                }
+            }
+
+            AddFloorCell(spec, floor, candidate.C1);
+            if (candidate.Depth == 2)
+            {
+                AddFloorCell(spec, floor, candidate.C2);
+            }
+            if (foods.Add(candidate.Deepest))
+            {
+                spec.Foods.Add(candidate.Deepest);
+            }
+            usedAttach.Add(candidate.Attach);
+            placed++;
+        }
+        return placed;
+    }
+
+    private readonly struct ForkCandidate
+    {
+        public readonly Cell Attach;
+        public readonly Cell C1;
+        public readonly Cell C2;
+        public readonly int Depth;
+        public readonly Cell Deepest;
+        public readonly int Score;
+
+        public ForkCandidate(Cell attach, Cell c1, Cell c2, int depth, Cell deepest, int score)
+        {
+            Attach = attach;
+            C1 = c1;
+            C2 = c2;
+            Depth = depth;
+            Deepest = deepest;
+            Score = score;
+        }
+    }
+
+    private static bool IsForkCell(Cell c, LevelSpec spec, HashSet<Cell> floor,
+        HashSet<Cell> obstacles, HashSet<Cell> foods)
+    {
+        if (c.X < spec.Origin.X || c.Y < spec.Origin.Y
+            || c.X >= spec.Origin.X + spec.Width || c.Y >= spec.Origin.Y + spec.Height)
+        {
+            return false;
+        }
+        if (c.Equals(spec.Spawn) || c.Equals(spec.Goal))
+        {
+            return false;
+        }
+        return !floor.Contains(c) && !obstacles.Contains(c) && !foods.Contains(c);
+    }
+
+    /// <summary>
+    /// 新格是否与“非预期”地板正交相邻（会形成环路 / 意外捷径）。
+    /// 只查 4 邻接：斜角相邻不会连通，且 1 格宽走廊的凹室必然与走廊斜角相邻。
+    /// </summary>
+    private static bool TouchesOtherFloor(Cell c, HashSet<Cell> floor, HashSet<Cell> allowed)
+    {
+        Cell[] orthogonal =
+        {
+            new(1, 0), new(-1, 0), new(0, 1), new(0, -1),
+        };
+        foreach (Cell d in orthogonal)
+        {
+            var n = new Cell(c.X + d.X, c.Y + d.Y);
+            if (allowed.Contains(n))
+            {
+                continue;
+            }
+            if (floor.Contains(n))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void AddFloorCell(LevelSpec spec, HashSet<Cell> floor, Cell c)
+    {
+        if (floor.Add(c))
+        {
+            spec.Floor.Add(c);
+        }
+    }
+
+    private static bool NearAny(Cell c, List<Cell> cells, int radius)
+    {
+        foreach (Cell other in cells)
+        {
+            if (Math.Abs(c.X - other.X) <= radius && Math.Abs(c.Y - other.Y) <= radius)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<Cell> RouteCellsFrom(LevelSpec spec, string route)
+    {
+        var cells = new List<Cell> { spec.Spawn };
+        Cell head = spec.Spawn;
+        foreach (char ch in route)
+        {
+            Cell d = DirCellForChar(ch);
+            head = new Cell(head.X + d.X, head.Y + d.Y);
+            cells.Add(head);
+        }
+        return cells;
     }
 
     // ── 验证与评分 ──────────────────────────────────────────

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Godot;
 using Growth.Algorithms;
 using Growth.Algorithms.Generation;
+using Growth.Algorithms.Model;
 using Growth.Algorithms.Scoring;
 
 namespace Growth.Tests;
@@ -34,9 +35,27 @@ public partial class CoreTests : Node
         TestMovementAndTruncation();
         TestFood();
         TestGrowthAndShield();
+        TestNegativeMechLevels();
         TestParams();
         TestLevelSpecV2();
         TestMetrics();
+        TestCoverageCone();
+        TestTimeExpandedModel();
+        TestTimeExpandedModelVsRuleState();
+        TestDangerField();
+        TestFairness();
+        TestDesignFairnessGate();
+        TestGenerationPortfolio();
+        TestDeadEndInjection();
+        TestTemplateLibrary();
+        TestInteractionPlanner();
+        TestTemplateService();
+        TestGenerationProgress();
+        TestInteractionMetrics();
+        TestScoreCalibration();
+        TestPairLoopStructure();
+        TestFallbackRate();
+        TestGeneratedStructure();
         TestTagger();
         TestMapElites();
         TestGenerationJob();
@@ -176,6 +195,44 @@ public partial class CoreTests : Node
         Check(st.GetClaimedCells().Count == 5, "机关: 满级后刷新补占中心格");
     }
 
+    /// <summary>负初始阶段：不占格、每周期 +1、到 0 才开始覆盖；R1 时刻表同步。</summary>
+    private void TestNegativeMechLevels()
+    {
+        Check(MechanicShapes.MinLevel == -10, "负阶段: MinLevel=-10");
+        LevelSpec spec = MakeSpec(5, 5, new Cell(0, 0), new Cell(4, 4), 20, 2, 2, 1,
+            mechCenters: new[] { new Cell(2, 2) }, mechLevels: new[] { -2 });
+        var state = new RuleState();
+        state.Setup(spec);
+        state.Start();
+
+        Check(state.GetMechLevels()[0].AsInt32() == -2, "负阶段: 开局阶段 -2");
+        Check(state.GetMaxMechLevel() == -2, "负阶段: 最大阶段为负");
+        Check(state.GetClaimedCells().Count == 0, "负阶段: 开局不占格");
+        Check(state.CoverSteps.TryGetValue(new Cell(2, 2), out int centerStage) && centerStage == 2,
+            "负阶段: 核心覆盖阶段后移 2 次");
+
+        state.Step(new Vector2I(1, 0));
+        state.Step(new Vector2I(1, 0));
+        Check(state.GetMechLevels()[0].AsInt32() == -1, "负阶段: 一轮生长后 -1");
+        Check(state.GetClaimedCells().Count == 0, "负阶段: -1 仍不占格");
+
+        state.Step(new Vector2I(1, 0));
+        state.Step(new Vector2I(1, 0));
+        Check(state.GetMechLevels()[0].AsInt32() == 0, "负阶段: 两轮生长后到 0");
+        Check(state.GetClaimedCells().Count == 1, "负阶段: 0 级只占核心");
+
+        state.Step(new Vector2I(0, 1));
+        state.Step(new Vector2I(0, 1));
+        Check(state.GetMechLevels()[0].AsInt32() == 1, "负阶段: 三轮生长后 1");
+        Check(state.GetClaimedCells().Count == 5, "负阶段: 1 级占十字 5 格");
+
+        var model = new TimeExpandedModel(spec, 20);
+        model.TryIndexOf(new Cell(2, 2), out int centerIndex);
+        Check(model.CoverStageOf(new Cell(2, 2)) == 2, "负阶段: R1 覆盖阶段与 RuleState 一致");
+        Check(!model.IsMechAt(1, centerIndex), "负阶段: R1 一轮生长后未覆盖核心");
+        Check(model.IsMechAt(2, centerIndex), "负阶段: R1 两轮生长后覆盖核心");
+    }
+
     /// <summary>参数采样可行域（§8.2）与签名格式。</summary>
     private void TestParams()
     {
@@ -302,6 +359,995 @@ public partial class CoreTests : Node
         state.RestoreState(snapshot);
         Check(state.GetSteps() == stepsBefore && state.Head.Equals(headBefore),
             "指标: 快照恢复 trail/steps/head");
+    }
+
+    /// <summary>M1：覆盖锥（单中心 / cap / 初始阶段 / 并集）。</summary>
+    private void TestCoverageCone()
+    {
+        var narrow = new CoverageCone(new Cell(5, 5), 0, 1);
+        Check(narrow.StageAt(new Cell(5, 5)) == 0, "覆盖锥: 中心 stage=0");
+        Check(narrow.StageAt(new Cell(6, 5)) == 1, "覆盖锥: 十字 stage=1");
+        Check(narrow.StageAt(new Cell(6, 6)) == CoverageCone.Never, "覆盖锥: cap=1 不覆盖 3x3 角");
+        Check(narrow.TimeAt(new Cell(6, 5), 3) == 3, "覆盖锥: 覆盖时刻 = stage×I");
+        Check(narrow.TimeAt(new Cell(6, 6), 3) == CoverageCone.Never, "覆盖锥: 不覆盖格时刻为 Never");
+
+        var wide = new CoverageCone(new Cell(0, 0), 1, 4);
+        Check(wide.StageAt(new Cell(0, 0)) == 0, "覆盖锥: 初始阶段抵消中心");
+        Check(wide.StageAt(new Cell(1, 0)) == 0, "覆盖锥: stage 不为负");
+        Check(wide.StageAt(new Cell(1, 1)) == 1, "覆盖锥: 3x3 角 stage=1");
+        Check(wide.StageAt(new Cell(2, 1)) == 3, "覆盖锥: 5x5 去角 stage=3");
+        Check(wide.StageAt(new Cell(2, 2)) == CoverageCone.Never, "覆盖锥: 超出 cap 不覆盖");
+
+        var union = CoverageCone.Union(new[]
+        {
+            new CoverageCone(new Cell(0, 0), 0, 4),
+            new CoverageCone(new Cell(2, 0), 0, 4),
+        });
+        Check(union.TryGetValue(new Cell(1, 0), out int stage) && stage == 1,
+            "覆盖锥: 并集取最小 stage");
+        Check(!union.ContainsKey(new Cell(9, 9)), "覆盖锥: 并集不含远处格");
+    }
+
+    /// <summary>M1：R1 时间展开（Latest / slack / 可行核 / 单调性 / 食物层）。</summary>
+    private void TestTimeExpandedModel()
+    {
+        var spec = MakeSpec(5, 5, new Cell(0, 0), new Cell(4, 0), 5, 6, 2, 4,
+            foods: new[] { new Cell(2, 2), new Cell(4, 4) });
+        var model = new TimeExpandedModel(spec, 20);
+
+        Check(model.GrowthCount(0) == 0, "R1: g(0)=0");
+        Check(model.GrowthCount(model.GrowthInterval) == 0, "R1: 无机关时 g_max=0");
+        Check(model.GrowthCount(5) == 0, "R1: 未到周期不生长");
+        Check(model.LengthAt(0) == 5 && model.LengthAt(2) == 9, "R1: L(k)=L0+ΔL·k");
+
+        Check(model.IsReachable(0, 0, new Cell(0, 0)), "R1: 开局可达出生点");
+        Check(!model.IsReachable(0, 0, new Cell(4, 4)), "R1: 开局不可达远处");
+        Check(!model.IsReachable(0, 8, new Cell(4, 4)), "R1: 吃花层不进 k=0");
+        Check(model.IsReachable(1, 8, new Cell(4, 4)), "R1: 进入食物格使 k=1");
+
+        Check(model.LatestTime(0, new Cell(0, 0)) == 16, "R1: 空场 Latest(S)=T−dist");
+        Check(model.LatestTime(0, new Cell(4, 4)) == 16, "R1: 后续吃花可扩大身长（Latest 取上界）");
+        Check(model.LatestTime(0, new Cell(4, 4)) == model.LatestTime(2, new Cell(4, 4)),
+            "R1: Latest 随 k 收敛到同一上界");
+        Check(model.Slack(0, 0, new Cell(0, 0)) == 16, "R1: slack = Latest − t");
+
+        var shortSpec = MakeSpec(3, 3, new Cell(0, 0), new Cell(2, 2), 3, 6, 2, 4);
+        var shortModel = new TimeExpandedModel(shortSpec, 20);
+        Check(shortModel.LatestTime(0, new Cell(0, 0)) == -1, "R1: 身长不足时无法到达终点");
+        Check(!shortModel.IsViable(0, 0, new Cell(0, 0)), "R1: 身长不足时开局不可行");
+
+        int monotonicBreaks = 0;
+        for (int y = 0; y < 5; y++)
+        {
+            for (int x = 0; x < 5; x++)
+            {
+                var cell = new Cell(x, y);
+                for (int k = 0; k < model.FoodCount; k++)
+                {
+                    if (model.LatestTime(k + 1, cell) < model.LatestTime(k, cell))
+                    {
+                        monotonicBreaks++;
+                    }
+                }
+            }
+        }
+        Check(monotonicBreaks == 0, $"R1: Latest 随 k 单调（逆向 {monotonicBreaks}）");
+
+        // 单格走廊：侧边机关在第 3 步覆盖唯一通路 -> 只能开局后短窗口通过。
+        var gateSpec = MakeSpec(5, 3, new Cell(0, 0), new Cell(4, 0), 12, 3, 2, 1,
+            mechCenters: new[] { new Cell(2, 1) }, mechLevels: new[] { 0 },
+            obstacles: new[]
+            {
+                new Cell(0, 1), new Cell(1, 1), new Cell(2, 1), new Cell(3, 1), new Cell(4, 1),
+                new Cell(0, 2), new Cell(1, 2), new Cell(2, 2), new Cell(3, 2), new Cell(4, 2),
+            });
+        var gate = new TimeExpandedModel(gateSpec, 20);
+        Check(gate.GrowthCount(3) == 1 && gate.CoverStageOf(new Cell(2, 0)) == 1,
+            "R1: 走廊机关第 3 步生长");
+        Check(gate.LatestTime(0, new Cell(0, 0)) == 1, "R1: 闸门只允许开局后短窗口通过");
+        Check(gate.LatestTime(0, new Cell(1, 0)) == 2, "R1: 闸门前一格 Latest=2");
+        Check(!gate.IsViable(0, 2, new Cell(0, 0)), "R1: 晚一步出发不可行");
+        Check(gate.IsViable(0, 1, new Cell(1, 0)), "R1: 窗口内到达闸门前可行");
+    }
+
+    /// <summary>M1：R1 与 RuleState 的 coverStep / 覆盖时刻逐格一致，且真实路线前缀落在可行核内。</summary>
+    private void TestTimeExpandedModelVsRuleState()
+    {
+        Dictionary<int, string> routes = LoadGoldenRoutes();
+        foreach (int id in new[] { 4, 5 })
+        {
+            string specJson = FileAccess.GetFileAsString($"res://tests/fixtures/anchors/level_{id:00}.json");
+            LevelSpec spec = LevelSpec.FromJson(specJson);
+            var state = new RuleState();
+            state.Setup(spec);
+            if (!routes.TryGetValue(id, out string route))
+            {
+                Check(false, $"R1: L{id} 缺少黄金路线");
+                continue;
+            }
+            int horizon = Math.Max(TimeExpandedModel.DefaultHorizon(spec), route.Length + 8);
+            var model = new TimeExpandedModel(spec, horizon);
+
+            Check(model.GMax == state.GMax, $"R1: L{id} g_max 与 RuleState 一致");
+            int stageMismatch = 0;
+            int timeMismatch = 0;
+            int interval = Math.Max(spec.GrowthInterval, 1);
+            for (int y = spec.Origin.Y; y < spec.Origin.Y + spec.Height; y++)
+            {
+                for (int x = spec.Origin.X; x < spec.Origin.X + spec.Width; x++)
+                {
+                    var cell = new Cell(x, y);
+                    int expected = state.CoverSteps.TryGetValue(cell, out int coverStep)
+                        ? coverStep
+                        : TimeExpandedModel.INF;
+                    if (model.CoverStageOf(cell) != expected)
+                    {
+                        stageMismatch++;
+                    }
+                    int expectedTime = expected >= TimeExpandedModel.INF
+                        ? TimeExpandedModel.INF
+                        : expected * interval;
+                    if (model.CoverTimeOf(cell) != expectedTime)
+                    {
+                        timeMismatch++;
+                    }
+                }
+            }
+            Check(stageMismatch == 0, $"R1: L{id} coverStep 逐格一致（差异 {stageMismatch}）");
+            Check(timeMismatch == 0, $"R1: L{id} 覆盖时刻逐格一致（差异 {timeMismatch}）");
+            Check(model.CoverStageOf(spec.Spawn) == TimeExpandedModel.INF, $"R1: L{id} 出生点不被覆盖");
+            Check(model.CoverStageOf(spec.Goal) == TimeExpandedModel.INF, $"R1: L{id} 终点不被覆盖");
+
+            var replay = new RuleState();
+            replay.Setup(spec);
+            replay.Start();
+            int k = 0;
+            bool sound = true;
+            for (int i = 0; i < route.Length; i++)
+            {
+                Vector2I dir = DirForChar(route[i]);
+                var stepDir = new Cell(dir.X, dir.Y);
+                Cell next = replay.Head + stepDir;
+                RuleState.StepOutcome outcome = replay.StepCore(stepDir);
+                if (!outcome.Accepted)
+                {
+                    sound = false;
+                    break;
+                }
+                if (outcome.Truncated)
+                {
+                    // R1 不建模身体 / 截断；截断目标格的真实合法性无法在松弛层表达。
+                    continue;
+                }
+                if (spec.Foods.Contains(next))
+                {
+                    k = Math.Min(k + 1, model.FoodCount);
+                }
+                if (!model.IsReachable(k, i + 1, replay.Head) || !model.IsViable(k, i + 1, replay.Head))
+                {
+                    sound = false;
+                    break;
+                }
+            }
+            Check(sound, $"R1: L{id} 真实路线前缀都在可行核内");
+        }
+    }
+
+    /// <summary>M1：感知危险场（不穿墙、时间软化、确定性、值域）。</summary>
+    private void TestDangerField()
+    {
+        var walled = MakeSpec(7, 3, new Cell(0, 2), new Cell(6, 2), 12, 6, 2, 4,
+            mechCenters: new[] { new Cell(0, 0) }, mechLevels: new[] { 4 },
+            obstacles: new[] { new Cell(3, 0), new Cell(3, 1), new Cell(3, 2) });
+        var wallModel = new TimeExpandedModel(walled, 20);
+        var wallField = new PerceivedDangerField(wallModel);
+        Check(wallField.At(new Cell(1, 1), 0) > 0.0, "危险场: 机关附近有危险值");
+        Check(wallField.At(new Cell(5, 1), 0) == 0.0, "危险场: 不穿墙扩散（墙后恒为 0）");
+
+        var softened = MakeSpec(7, 1, new Cell(0, 0), new Cell(6, 0), 12, 3, 2, 4,
+            mechCenters: new[] { new Cell(2, 0) }, mechLevels: new[] { 0 });
+        var softModel = new TimeExpandedModel(softened, 20);
+        var softField = new PerceivedDangerField(softModel);
+        Check(softField.At(new Cell(3, 0), 0) < softField.At(new Cell(3, 0), 10),
+            "危险场: 覆盖临近时危险升高");
+
+        var repeatField = new PerceivedDangerField(softModel);
+        int deterministicBreaks = 0;
+        int rangeBreaks = 0;
+        for (int t = 0; t <= softModel.Horizon; t++)
+        {
+            for (int x = 0; x < 7; x++)
+            {
+                var cell = new Cell(x, 0);
+                double value = softField.At(cell, t);
+                if (value < 0.0 || value > 1.0)
+                {
+                    rangeBreaks++;
+                }
+                if (Math.Abs(value - repeatField.At(cell, t)) > 1e-12)
+                {
+                    deterministicBreaks++;
+                }
+            }
+        }
+        Check(rangeBreaks == 0, "危险场: 值域在 [0,1]");
+        Check(deterministicBreaks == 0, "危险场: 同输入同输出（确定性）");
+    }
+
+    /// <summary>M1：公平性（AUC 手算、无机关全 safe、时间陷阱判 unsafe）。</summary>
+    private void TestFairness()
+    {
+        var ranked = new List<BranchSample>
+        {
+            new() { Perceived = 0.9, Unsafe = true },
+            new() { Perceived = 0.8, Unsafe = false },
+        };
+        Check(Math.Abs(FairnessEvaluator.Auc(ranked) - 1.0) < 1e-9, "公平性: AUC 正确排序=1");
+        ranked[0].Perceived = 0.2;
+        Check(Math.Abs(FairnessEvaluator.Auc(ranked) - 0.0) < 1e-9, "公平性: AUC 反向=0");
+        ranked[0].Perceived = 0.8;
+        Check(Math.Abs(FairnessEvaluator.Auc(ranked) - 0.5) < 1e-9, "公平性: AUC 打平=0.5");
+        Check(Math.Abs(FairnessEvaluator.Auc(
+            new List<BranchSample> { new() { Perceived = 0.2, Unsafe = false } }) - 1.0) < 1e-9,
+            "公平性: 全 safe 边界=1");
+        Check(Math.Abs(FairnessEvaluator.Auc(
+            new List<BranchSample> { new() { Perceived = 0.2, Unsafe = true } }) - 0.0) < 1e-9,
+            "公平性: 全 unsafe 边界=0");
+
+        var open = MakeSpec(5, 5, new Cell(0, 0), new Cell(4, 0), 12, 6, 2, 4);
+        var openModel = new TimeExpandedModel(open, 20);
+        var openReport = new FairnessEvaluator(open, openModel, new PerceivedDangerField(openModel))
+            .Evaluate("DDDD");
+        Check(openReport.BranchCount > 0, "公平性: 空场存在分支样本");
+        Check(openReport.UnsafeCount == 0 && openReport.Auc == 1.0, "公平性: 空场无 unsafe 分支");
+        Check(openReport.MinMuFair == 1.0 && openReport.Passed(), "公平性: 空场通过");
+
+        // 时间陷阱：走廊旁的垂直死路在下一轮生长后入口被封，分支无法回溯。
+        var trap = MakeSpec(7, 4, new Cell(0, 2), new Cell(6, 2), 12, 4, 2, 4,
+            mechCenters: new[] { new Cell(3, 3) }, mechLevels: new[] { 0 },
+            obstacles: new[]
+            {
+                new Cell(2, 0), new Cell(2, 1),
+                new Cell(4, 0), new Cell(4, 1),
+            });
+        var trapModel = new TimeExpandedModel(trap, 24);
+        var trapReport = new FairnessEvaluator(trap, trapModel, new PerceivedDangerField(trapModel))
+            .Evaluate("DDDDDD");
+        Check(trapReport.BranchCount > 0, "公平性: 陷阱关存在分支样本");
+        Check(trapReport.UnsafeCount >= 1, "公平性: 时间陷阱分支被判 unsafe");
+        Check(trapReport.Auc >= 0.0 && trapReport.Auc <= 1.0, "公平性: AUC 在 [0,1]");
+        Check(trapReport.MinMuFair >= 0.0 && trapReport.MinMuFair <= 1.0, "公平性: μ_fair 在 [0,1]");
+    }
+
+    /// <summary>v4 设计公平门：支配差距 / 诱饵必败 / 机关必要。</summary>
+    private void TestDesignFairnessGate()
+    {
+        // 1) 规范解比最优解长 4 步：应报告支配捷径。
+        LevelSpec open = MakeSpec(3, 3, new Cell(0, 0), new Cell(2, 0), 20, 99, 2, 0);
+        var verifyOptions = new DesignFairnessOptions
+        {
+            AssumeCanonicalOptimal = false,
+            Strict = false,
+        };
+        DesignFairnessReport dominated = DesignFairnessGate.Evaluate(open, "SSDDWW", verifyOptions);
+        Check(dominated.DominanceGap == 4, $"公平门: 支配差距=4（实际 {dominated.DominanceGap}）");
+        Check(!dominated.DominanceFree && !dominated.Passed, "公平门: 存在支配捷径时拒绝");
+
+        DesignFairnessReport optimal = DesignFairnessGate.Evaluate(open, "DD", verifyOptions);
+        Check(optimal.DominanceFree && optimal.CanonicalNearOptimal && optimal.Passed,
+            "公平门: 最优规范解通过");
+
+        // 2) 诱饵必败：吃 (0,2) 后最短胜利 6 步 > 2 + 2。
+        LevelSpec decoy = MakeSpec(5, 5, new Cell(0, 0), new Cell(2, 0), 20, 99, 2, 0,
+            foods: new[] { new Cell(0, 2) });
+        var strictOptions = new DesignFairnessOptions
+        {
+            AssumeCanonicalOptimal = true,
+            Strict = true,
+        };
+        DesignFairnessReport decoyReport = DesignFairnessGate.Evaluate(decoy, "DD", strictOptions);
+        Check(decoyReport.DecoysChecked == 1 && decoyReport.DecoysProven == 1,
+            "公平门: 必败诱饵被证明");
+        Check(decoyReport.Passed, "公平门: 必败诱饵通过严格门");
+
+        // 3) 无害诱饵：吃 (1,1) 后 4 步即可胜利（≤ 2 + 2），不算陷阱。
+        LevelSpec harmless = MakeSpec(5, 5, new Cell(0, 0), new Cell(2, 0), 20, 99, 2, 0,
+            foods: new[] { new Cell(1, 1) });
+        DesignFairnessReport harmlessReport = DesignFairnessGate.Evaluate(harmless, "DD", strictOptions);
+        Check(harmlessReport.DecoysHarmless == 1 && !harmlessReport.DecoyProofPassed,
+            "公平门: 无害诱饵被识别");
+        Check(!harmlessReport.Passed, "公平门: 严格模式拒绝无害诱饵");
+
+        // 4) 机关必要：初始机关封住直路 (2,0)，删除后最优 6→4。
+        LevelSpec gate = MakeSpec(5, 3, new Cell(0, 0), new Cell(4, 0), 20, 99, 2, 4,
+            mechCenters: new[] { new Cell(2, 0) }, mechLevels: new[] { 0 });
+        DesignFairnessReport gateReport = DesignFairnessGate.Evaluate(gate, "SDDDDW", strictOptions);
+        Check(gateReport.GatesNecessary == 1 && gateReport.MaxGateStepDrop >= 2,
+            $"公平门: 机关必要性 (drop={gateReport.MaxGateStepDrop})");
+        Check(gateReport.Passed, "公平门: 必要机关通过严格门");
+    }
+
+    /// <summary>v4 Portfolio：确定性 + 档位比例单调。</summary>
+    private void TestGenerationPortfolio()
+    {
+        Check(GenerationPortfolio.Choose(42, 3, "hard")
+            == GenerationPortfolio.Choose(42, 3, "hard"), "Portfolio: 同输入确定性");
+        int structured = 0;
+        for (int i = 0; i < 1000; i++)
+        {
+            if (GenerationPortfolio.Choose(i, i % 7, "hard") == GenerationSource.Structured)
+            {
+                structured++;
+            }
+        }
+        double ratio = structured / 1000.0;
+        Check(ratio > 0.5 && ratio < 0.7, $"Portfolio: hard 结构图占比≈60%（实际 {ratio:P0}）");
+        Check(GenerationPortfolio.StructuredPercent("expert")
+            > GenerationPortfolio.StructuredPercent("easy"), "Portfolio: 档位越高结构图占比越高");
+    }
+
+    /// <summary>v4 结构注入：只开与主路线单点相连的深度 2 死胡同，并放诱饵花瓣。</summary>
+    private void TestDeadEndInjection()
+    {
+        var spec = new LevelSpec
+        {
+            Origin = Cell.Zero,
+            Width = 12,
+            Height = 5,
+            Spawn = new Cell(1, 2),
+            Goal = new Cell(10, 2),
+            InitialMaxLen = 20,
+            GrowthInterval = 99,
+            FoodLenGain = 2,
+            MechanismCap = 0,
+        };
+        for (int x = 0; x < 12; x++)
+        {
+            spec.Floor.Add(new Cell(x, 2));
+        }
+        int injected = RouteFirstGenerator.InjectDeadEndForks(
+            new DeterministicRng(7), spec, "DDDDDDDDD", 2);
+        Check(injected == 2, $"结构注入: 注入 2 个假岔路（实际 {injected}）");
+        Check(spec.Floor.Count == 12 + injected * 2,
+            $"结构注入: 地板增加 {injected * 2} 格（实际 {spec.Floor.Count - 12}）");
+        Check(spec.Foods.Count == injected, "结构注入: 每个岔路末端 1 片花瓣");
+
+        var floor = new HashSet<Cell>(spec.Floor);
+        foreach (Cell food in spec.Foods)
+        {
+            int neighbors = 0;
+            foreach (Cell d in new[] { new Cell(1, 0), new Cell(-1, 0), new Cell(0, 1), new Cell(0, -1) })
+            {
+                if (floor.Contains(new Cell(food.X + d.X, food.Y + d.Y)))
+                {
+                    neighbors++;
+                }
+            }
+            Check(neighbors == 1, $"结构注入: 花瓣 ({food.X},{food.Y}) 在死胡同末端");
+        }
+    }
+
+    /// <summary>M2：模板库定义 / 参数推导 / 实例化确定性。</summary>
+    private void TestTemplateLibrary()
+    {
+        Check(TemplateLibrary.All.Count == 9, "模板: T0–T8 共 9 个");
+        var ids = new HashSet<string>();
+        foreach (TemplateDef def in TemplateLibrary.All)
+        {
+            Check(ids.Add(def.Id), $"模板: id 唯一 {def.Id}");
+        }
+
+        var walkable = new List<Cell>();
+        for (int y = 0; y < 12; y++)
+        {
+            for (int x = 0; x < 12; x++)
+            {
+                walkable.Add(new Cell(x, y));
+            }
+        }
+        bool sawNegativeStart = false;
+        foreach (TemplateDef def in TemplateLibrary.All)
+        {
+            TemplateInstance first = TemplateLibrary.Instantiate(def, new DeterministicRng(12345), 14, walkable);
+            TemplateInstance second = TemplateLibrary.Instantiate(def, new DeterministicRng(12345), 14, walkable);
+            Check(first != null, $"模板: {def.Id} 可实例化");
+            if (first == null)
+            {
+                continue;
+            }
+            Check(first.InitialMaxLen >= 3 && first.GrowthInterval >= 2
+                && first.MechanismCap >= 1 && first.FoodBudget >= 0,
+                $"模板: {def.Id} 参数合法");
+            Check(first.Centers.Count == def.Pattern.Length, $"模板: {def.Id} 机关数量符合模板");
+            Check(first.InitialLevels.Count == first.Centers.Count, $"模板: {def.Id} 初始阶段数量一致");
+            bool levelsOk = true;
+            foreach (int level in first.InitialLevels)
+            {
+                if (level < MechanicShapes.MinLevel || level >= first.MechanismCap)
+                {
+                    levelsOk = false;
+                }
+                if (level < 0)
+                {
+                    sawNegativeStart = true;
+                }
+            }
+            Check(levelsOk, $"模板: {def.Id} 初始阶段在 [-10,cap) 内");
+            Check(second != null && SameTemplateInstance(first, second), $"模板: {def.Id} 同 seed 实例化一致");
+        }
+        Check(sawNegativeStart, "模板: 至少一个模板使用负起始阶段");
+    }
+
+    /// <summary>M2：机关优先管线（每模板 ≥10 个可解样本 + 可重放 + 公平性/模板字段）。</summary>
+    private void TestInteractionPlanner()
+    {
+        var cases = new (string Id, string Tier, int Size, int Steps)[]
+        {
+            ("T0", "easy", 10, 10),
+            ("T1", "easy", 10, 11),
+            ("T2", "normal", 12, 14),
+            ("T3", "normal", 12, 14),
+            ("T4", "normal", 14, 16),
+            ("T5", "hard", 16, 22),
+            ("T6", "hard", 16, 22),
+            ("T7", "hard", 16, 22),
+            ("T8", "normal", 14, 16),
+        };
+
+        int replayFailed = 0;
+        int templateIdFailed = 0;
+        int fairnessMissing = 0;
+        int templateTotal = 0;
+        int templateTrunc = 0;
+        int templateFork = 0;
+        int templateDecoy = 0;
+        foreach ((string id, string tier, int size, int steps) in cases)
+        {
+            int solvable = 0;
+            int templateMode = 0;
+            var reasons = new Dictionary<string, int>();
+            for (int attempt = 0; attempt < 72 && solvable < 10; attempt++)
+            {
+                var cfg = new GeneratorConfig
+                {
+                    Seed = 900 + attempt,
+                    Difficulty = tier,
+                    Width = size,
+                    Height = size,
+                    TemplateId = id,
+                };
+                RouteFirstGenerator.AttemptResult attemptResult =
+                    InteractionPlanner.RunAttempt(cfg, steps, 0, attempt);
+                if (!attemptResult.Success)
+                {
+                    string reason = string.IsNullOrEmpty(attemptResult.Reason) ? "未知" : attemptResult.Reason;
+                    reasons[reason] = reasons.TryGetValue(reason, out int n) ? n + 1 : 1;
+                    continue;
+                }
+
+                GenerationResult candidate = attemptResult.Candidate;
+                solvable++;
+                if (candidate.GenerationMode == "template")
+                {
+                    templateMode++;
+                    templateTotal++;
+                    if (candidate.Metrics.TryGetValue("interaction_truncations", out double trunc) && trunc > 0)
+                    {
+                        templateTrunc++;
+                    }
+                    if (candidate.Metrics.TryGetValue("interaction_forks", out double forks) && forks >= 2)
+                    {
+                        templateFork++;
+                    }
+                    if (candidate.Metrics.TryGetValue("decoy_foods", out double decoy) && decoy > 0)
+                    {
+                        templateDecoy++;
+                    }
+                }
+                if (candidate.TemplateId != id)
+                {
+                    templateIdFailed++;
+                }
+                if (!candidate.Metrics.ContainsKey("fairness_auc") && candidate.GenerationMode == "template")
+                {
+                    fairnessMissing++;
+                }
+                if (!ReplaySpec(LevelSpec.FromJson(candidate.Spec.ToJson()), candidate.Solution.Route))
+                {
+                    replayFailed++;
+                }
+            }
+
+            Check(solvable >= 10, $"模板 {id}: 可解样本 ≥10（实际 {solvable}，模板主路径 {templateMode}）");
+            Check(templateMode >= 1, $"模板 {id}: 至少 1 个走模板主路径（实际 {templateMode}）");
+            GD.Print($"[Template] {id} solvable={solvable} template={templateMode} " +
+                $"reasons={string.Join("|", reasons.Keys)}");
+        }
+        Check(replayFailed == 0, $"模板: 全部样本路线可重放（失败 {replayFailed}）");
+        Check(templateIdFailed == 0, $"模板: template_id 与请求一致（失败 {templateIdFailed}）");
+        Check(fairnessMissing == 0, $"模板: 成功候选带公平性指标（缺失 {fairnessMissing}）");
+        Check(templateDecoy >= 1,
+            $"模板: 至少 1 个模板关带路线外诱饵（{templateDecoy}/{templateTotal}，截断 {templateTrunc}）");
+        Check(templateFork >= Math.Max(1, templateTotal / 2),
+            $"模板: 至少一半模板关带 ≥2 步岔路（{templateFork}/{templateTotal}）");
+    }
+
+    /// <summary>M2：GenerationService 暴露 template 模型并序列化 generation_mode / template_id。</summary>
+    private void TestTemplateService()
+    {
+        string dir = ProjectSettings.GlobalizePath("user://test_template_cache");
+        if (System.IO.Directory.Exists(dir))
+        {
+            System.IO.Directory.Delete(dir, true);
+        }
+        var service = new GenerationService();
+        service.SetupCache(dir, 8);
+        service.SetGeneratorModel("template");
+        string json = service.GenerateNow(31, "easy", "loading");
+        Check(!string.IsNullOrEmpty(json), "模板服务: 返回 JSON");
+        if (string.IsNullOrEmpty(json))
+        {
+            return;
+        }
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement root = doc.RootElement;
+        Check(root.GetProperty("success").GetBoolean(), "模板服务: 生成成功");
+        string mode = root.GetProperty("generation_mode").GetString() ?? "";
+        Check(mode == "template" || mode == "fallback", $"模板服务: generation_mode={mode}");
+        string templateId = root.GetProperty("template_id").GetString() ?? "";
+        Check(!string.IsNullOrEmpty(templateId), "模板服务: template_id 非空");
+        JsonElement features = root.GetProperty("features");
+        Check(features.TryGetProperty("h", out _), "模板服务: features 含交互 H");
+        Check(features.TryGetProperty("d_interaction", out _), "模板服务: features 含 D_interaction");
+        string specJson = root.GetProperty("spec_json").GetString() ?? "";
+        string route = root.GetProperty("route").GetString() ?? "";
+        Check(!string.IsNullOrEmpty(specJson) && !string.IsNullOrEmpty(route), "模板服务: spec / route 非空");
+        if (!string.IsNullOrEmpty(specJson) && !string.IsNullOrEmpty(route))
+        {
+            Check(ReplaySpec(LevelSpec.FromJson(specJson), route), "模板服务: 路线可重放");
+        }
+    }
+
+    /// <summary>加载流程：进度单调 / 阶段上报 / 预算放宽 / 模板候选优先于降级。</summary>
+    private void TestGenerationProgress()
+    {
+        GenerationBudget loading = GenerationBudget.For(GenerationBudgetTier.Loading);
+        Check(loading.MaxMilliseconds >= 20000 && loading.MaxUnits >= 900,
+            "加载: Loading 预算已放宽（>=20s / >=900 单元）");
+        Check(loading.MaxCandidates >= 4 && loading.MaxSearchAttempts >= 32,
+            "加载: 候选数与搜索次数已放宽");
+        Check(loading.AttemptMilliseconds == 0,
+            "加载: 后台线程不再限制单次尝试时间片");
+
+        var cfg = new GeneratorConfig
+        {
+            Seed = 900,
+            Difficulty = "easy",
+            Width = 10,
+            Height = 10,
+            TargetSteps = 10,
+            Candidates = 1,
+            MaxAttempts = 6,
+            GeneratorModel = GeneratorModel.TemplateField,
+            TemplateId = "T0",
+        };
+        var job = new GenerationJob(cfg, loading);
+        double last = -1.0;
+        bool monotonic = true;
+        bool phaseSeen = false;
+        int guard = 0;
+        while (!job.Done && guard++ < 5000)
+        {
+            job.Advance(4.0);
+            double fraction = job.ProgressFraction;
+            if (fraction < last - 1e-9)
+            {
+                monotonic = false;
+            }
+            last = fraction;
+            if (!string.IsNullOrEmpty(job.Phase))
+            {
+                phaseSeen = true;
+            }
+        }
+        Check(job.Done, "加载: 分帧任务可完成");
+        Check(monotonic, "加载: 进度单调不下降");
+        Check(job.ProgressFraction >= 1.0 - 1e-9, "加载: 完成后进度为 1");
+        Check(phaseSeen, "加载: 上报生成阶段");
+        GD.Print($"[Progress] easy max_attempt_ms={job.MaxAttemptMilliseconds:F1}");
+        Check(job.MaxAttemptMilliseconds > 0, "加载: 单次尝试耗时已计量");
+        GenerationResult result = job.Result;
+        Check(result != null && result.Success, "加载: 分帧生成成功");
+        if (result != null && result.Success)
+        {
+            Check(result.GenerationMode == "template",
+                $"加载: 模板候选优先于降级（实际 {result.GenerationMode}）");
+        }
+
+        // hard 模板任务：验证小时间片下仍然优先模板候选，且单次尝试不超上限。
+        var hardCfg = new GeneratorConfig
+        {
+            Seed = 900,
+            Difficulty = "hard",
+            Width = 16,
+            Height = 16,
+            TargetSteps = 22,
+            Candidates = 2,
+            MaxAttempts = 16,
+            GeneratorModel = GeneratorModel.TemplateField,
+            TemplateId = "T4",
+        };
+        var hardJob = new GenerationJob(hardCfg, loading);
+        GenerationResult hardResult = hardJob.RunToCompletion();
+        GD.Print($"[Progress] hard max_attempt_ms={hardJob.MaxAttemptMilliseconds:F1} " +
+            $"mode={hardResult?.GenerationMode} fallbacks={hardJob.Fallbacks}");
+        Check(hardJob.MaxAttemptMilliseconds > 0, "加载: hard 单次尝试耗时已计量");
+        Check(hardResult != null && hardResult.Success, "加载: hard 模板任务成功");
+
+        var service = new GenerationService();
+        string progressDir = ProjectSettings.GlobalizePath("user://test_progress_cache");
+        if (System.IO.Directory.Exists(progressDir))
+        {
+            System.IO.Directory.Delete(progressDir, true);
+        }
+        service.SetupCache(progressDir, 4);
+        service.SetGeneratorModel("template");
+        bool done = service.Begin(777, "easy", "bootstrap");
+        int frames = 0;
+        while (!done && frames++ < 5000)
+        {
+            // 生成在后台线程执行：这里轮询并让出 CPU，模拟加载屏每帧只取进度。
+            done = service.Advance(8.0);
+            if (!done)
+            {
+                System.Threading.Thread.Sleep(1);
+            }
+        }
+        Check(done, "加载: 服务分帧完成");
+        string progressJson = service.ProgressJson();
+        Check(!string.IsNullOrEmpty(progressJson), "加载: ProgressJson 非空");
+        if (!string.IsNullOrEmpty(progressJson))
+        {
+            using JsonDocument doc = JsonDocument.Parse(progressJson);
+            JsonElement root = doc.RootElement;
+            Check(root.GetProperty("percent").GetDouble() >= 0.999, "加载: 完成时 ProgressJson 为 100%");
+            Check(!string.IsNullOrEmpty(root.GetProperty("phase").GetString()), "加载: ProgressJson 带阶段");
+        }
+    }
+
+    /// <summary>M4：交互指标（H / Deception / Cuts / Contention / L_tight）+ 基线扣除。</summary>
+    private void TestInteractionMetrics()
+    {
+        Dictionary<int, string> routes = LoadGoldenRoutes();
+        var options = new InteractionOptions { LookaheadCap = 8 };
+        var dRaw = new double[6];
+        var dInteraction = new double[6];
+        for (int id = 1; id <= 5; id++)
+        {
+            string specJson = FileAccess.GetFileAsString($"res://tests/fixtures/anchors/level_{id:00}.json");
+            LevelSpec spec = LevelSpec.FromJson(specJson);
+            InteractionScore score = InteractionScore.Evaluate(spec, routes[id], options);
+            dRaw[id] = score.Level.DRaw;
+            dInteraction[id] = score.DInteraction;
+            Check(score.Level.H >= 1 && score.Level.H <= 8, $"交互: L{id} H 在 [1,8]");
+            Check(score.Level.Deception >= 0 && score.Level.Deception <= 1,
+                $"交互: L{id} Deception 在 [0,1]");
+            Check(score.Level.Cuts >= 0 && score.Level.Cuts <= 1, $"交互: L{id} Cuts 在 [0,1]");
+            Check(score.Level.Contention >= 0 && score.Level.Contention <= 1,
+                $"交互: L{id} Contention 在 [0,1]");
+            Check(score.Level.LTight >= 0 && score.Level.LTight <= 1, $"交互: L{id} L_tight 在 [0,1]");
+            GD.Print($"[IX] L{id} H={score.Level.H} Decep={score.Level.Deception:F3} " +
+                $"Cuts={score.Level.Cuts:F3} Cont={score.Level.Contention:F3} " +
+                $"LTight={score.Level.LTight:F3} D={score.Level.DRaw:F1} " +
+                $"Base={score.Baseline.DRaw:F1} DInt={score.DInteraction:F1} " +
+                $"trap={score.Level.AttractiveUnsafe}");
+        }
+        Check(dInteraction[1] < 0.01 && dInteraction[2] < 0.01 && dInteraction[3] < 0.01,
+            $"交互: L1–L3 无机关，D_interaction≈0（{dInteraction[1]:F2}/{dInteraction[2]:F2}/{dInteraction[3]:F2}）");
+        Check(dRaw[4] >= dRaw[1] && dRaw[5] >= dRaw[4] - 1e-9,
+            $"交互: L4/L5 原始交互分不低（{dRaw[1]:F1}/{dRaw[4]:F1}/{dRaw[5]:F1}）");
+        Check(dInteraction[5] > 0.0, "交互: L5 存在交互难度");
+
+        var open = MakeSpec(5, 5, new Cell(0, 0), new Cell(4, 0), 12, 6, 2, 4);
+        InteractionScore openScore = InteractionScore.Evaluate(open, "DDDD", options);
+        Check(openScore.Level.DRaw < 10.0 && openScore.DInteraction < 0.01,
+            $"交互: 空场直线交互≈0（D={openScore.Level.DRaw:F1}）");
+    }
+
+    /// <summary>M4：isotonic + 分段线性校准（单调、过锚点、倒挂被平滑）。</summary>
+    private void TestScoreCalibration()
+    {
+        var calibration = ScoreCalibration.FromAnchors(new List<(double, double)>
+        {
+            (0, 5), (10, 15), (20, 30), (30, 40), (50, 75),
+        });
+        Check(Math.Abs(calibration.Map(-5) - 5) < 1e-9, "校准: 低于首锚取首分");
+        Check(Math.Abs(calibration.Map(0) - 5) < 1e-9, "校准: 过首锚");
+        Check(Math.Abs(calibration.Map(10) - 15) < 1e-9, "校准: 过第二锚");
+        Check(Math.Abs(calibration.Map(50) - 75) < 1e-9, "校准: 过末锚");
+
+        bool monotonic = true;
+        double last = -1.0;
+        for (double d = 0; d <= 60; d += 1.0)
+        {
+            double value = calibration.Map(d);
+            if (value < last - 1e-9)
+            {
+                monotonic = false;
+            }
+            last = value;
+        }
+        Check(monotonic, "校准: 全程单调不减");
+
+        var messy = ScoreCalibration.FromAnchors(new List<(double, double)>
+        {
+            (0, 30), (10, 10), (20, 20),
+        });
+        Check(messy.Map(0) <= messy.Map(10) + 1e-9 && messy.Map(10) <= messy.Map(20) + 1e-9,
+            "校准: 倒挂锚点被平滑为单调");
+    }
+
+    /// <summary>确定性验证：必修花瓣保证可走完，路线外诱饵不被规范路线吃掉；L0 不随路线抬高。</summary>
+    private void TestPairLoopStructure()
+    {
+        LevelSpec field = MakeSpec(9, 5, new Cell(0, 2), new Cell(8, 2), 8, 6, 4, 1);
+        var instance = new TemplateInstance
+        {
+            TemplateId = "T-loop",
+            InitialMaxLen = 8,
+            FoodLenGain = 4,
+            GrowthInterval = 6,
+            MechanismCap = 1,
+            FoodBudget = 3,
+            AllowsFoods = true,
+            Prior = 0.8,
+        };
+        List<PairCandidate> pairs = PairSelector.Select(field, instance, 8, 8, 8, new DeterministicRng(7));
+        Check(pairs.Count > 0, "结构: 手工地图可选出 S/E 对");
+        if (pairs.Count > 0)
+        {
+            GD.Print($"[PairLoop] n={pairs.Count} decoy={pairs[0].DecoyFoods} " +
+                $"routeFoods={pairs[0].RouteFoods} forks={pairs[0].ForkSteps} " +
+                $"steps={pairs[0].Steps} foods={pairs[0].Spec.Foods.Count} L0={pairs[0].Spec.InitialMaxLen}");
+            Check(pairs[0].Spec.InitialMaxLen == 8,
+                $"结构: L0 保持模板值不按路线抬高（实际 {pairs[0].Spec.InitialMaxLen}）");
+            Check(pairs[0].RouteFoods >= 1,
+                $"结构: 规范路线吃到必修花瓣（实际 {pairs[0].RouteFoods}）");
+            Check(pairs[0].DecoyFoods >= 1,
+                $"结构: 路线外存在诱饵花瓣（实际 {pairs[0].DecoyFoods}）");
+        }
+    }
+
+    /// <summary>生成结构检查：规范路线是否出现回路（截断）与明显岔路。</summary>
+    private void TestGeneratedStructure()
+    {
+        // 随机地形上模板命中率有限，这里只做诊断采样（结构性硬断言由 TestPairLoopStructure 保证）。
+        var cases = new (string Id, string Tier, int Size, int Steps)[]
+        {
+            ("T3", "normal", 12, 14),
+            ("T4", "hard", 16, 22),
+            ("T7", "hard", 16, 22),
+        };
+        int total = 0;
+        int withTruncation = 0;
+        int withFork = 0;
+        int sumTrunc = 0;
+        int sumFork = 0;
+        foreach ((string id, string tier, int size, int steps) in cases)
+        {
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                var cfg = new GeneratorConfig
+                {
+                    Seed = 900 + attempt,
+                    Difficulty = tier,
+                    Width = size,
+                    Height = size,
+                    TemplateId = id,
+                };
+                RouteFirstGenerator.AttemptResult attemptResult =
+                    InteractionPlanner.RunAttempt(cfg, steps, 0, attempt);
+                if (!attemptResult.Success
+                    || attemptResult.Candidate.GenerationMode != "template")
+                {
+                    continue;
+                }
+                LevelSpec spec = LevelSpec.FromJson(attemptResult.Candidate.Spec.ToJson());
+                var replay = new RuleState();
+                replay.Setup(spec);
+                replay.Start();
+                int truncations = 0;
+                int forkSteps = 0;
+                foreach (char ch in attemptResult.Candidate.Solution.Route)
+                {
+                    Cell head = replay.Head;
+                    int walkOptions = 0;
+                    foreach (Cell d in new[] { new Cell(-1, 0), new Cell(1, 0), new Cell(0, -1), new Cell(0, 1) })
+                    {
+                        if (replay.ClassifyMove(head + d) == RuleState.MoveKind.Walk)
+                        {
+                            walkOptions++;
+                        }
+                    }
+                    if (walkOptions >= 2)
+                    {
+                        forkSteps++;
+                    }
+                    Vector2I stepDir = DirForChar(ch);
+                    RuleState.StepOutcome outcome = replay.StepCore(new Cell(stepDir.X, stepDir.Y));
+                    if (!outcome.Accepted)
+                    {
+                        break;
+                    }
+                    if (outcome.Truncated)
+                    {
+                        truncations++;
+                    }
+                }
+                total++;
+                sumTrunc += truncations;
+                sumFork += forkSteps;
+                if (truncations > 0)
+                {
+                    withTruncation++;
+                }
+                if (forkSteps >= 2)
+                {
+                    withFork++;
+                }
+            }
+        }
+        GD.Print($"[Structure] n={total} truncLevels={withTruncation} forkLevels={withFork} " +
+            $"avgTrunc={sumTrunc / (double)Math.Max(1, total):F2} avgFork={sumFork / (double)Math.Max(1, total):F2}");
+    }
+
+    /// <summary>降级率诊断：加载预算下 hard 模板任务的 fallback 占比（含黏菌 / 经典两档）。</summary>
+    private void TestFallbackRate()
+    {
+        var budget = new GenerationBudget
+        {
+            MaxUnits = 200,
+            MaxMilliseconds = 6000,
+            MaxCandidates = 2,
+            MaxSearchAttempts = 6,
+            AttemptMilliseconds = 50,
+        };
+        int total = 0;
+        int fallback = 0;
+        int fallbackPhysarum = 0;
+        int failed = 0;
+        var reasons = new Dictionary<string, int>();
+        for (int i = 0; i < 8; i++)
+        {
+            var cfg = new GeneratorConfig
+            {
+                Seed = 3000 + i,
+                Difficulty = "hard",
+                Width = 16,
+                Height = 16,
+                TargetSteps = 22,
+                Candidates = 2,
+                MaxAttempts = 24,
+                SearchAttempts = 6,
+                GeneratorModel = GeneratorModel.TemplateField,
+            };
+            var job = new GenerationJob(cfg, budget);
+            GenerationResult result = job.RunToCompletion();
+            foreach (KeyValuePair<string, int> kv in job.ReasonCounts)
+            {
+                reasons[kv.Key] = reasons.TryGetValue(kv.Key, out int n) ? n + kv.Value : kv.Value;
+            }
+            if (result == null || !result.Success)
+            {
+                failed++;
+                continue;
+            }
+            total++;
+            if (result.GenerationMode == "fallback")
+            {
+                fallback++;
+            }
+            else if (result.GenerationMode == "fallback_physarum")
+            {
+                fallbackPhysarum++;
+            }
+        }
+        GD.Print($"[Fallback] n={total} fallback={fallback} fallback_physarum={fallbackPhysarum} " +
+            $"failed={failed} reasons={string.Join("|", reasons.Keys)}");
+        Check(failed == 0, $"降级: 8 个 hard 任务全部成功（失败 {failed}）");
+        Check(fallback + fallbackPhysarum <= total / 2 + 1,
+            $"降级: fallback 占比不超过一半（{fallback + fallbackPhysarum}/{total}）");
+    }
+
+    private static bool SameTemplateInstance(TemplateInstance a, TemplateInstance b)
+    {
+        if (a.TemplateId != b.TemplateId || a.InitialMaxLen != b.InitialMaxLen
+            || a.FoodLenGain != b.FoodLenGain || a.GrowthInterval != b.GrowthInterval
+            || a.MechanismCap != b.MechanismCap || a.FoodBudget != b.FoodBudget
+            || a.Centers.Count != b.Centers.Count || a.InitialLevels.Count != b.InitialLevels.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.Centers.Count; i++)
+        {
+            if (!a.Centers[i].Equals(b.Centers[i]) || a.InitialLevels[i] != b.InitialLevels[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>构造可重复的测试关卡（矩形地板 + 可选障碍 / 食物 / 机关）。</summary>
+    private static LevelSpec MakeSpec(
+        int width,
+        int height,
+        Cell spawn,
+        Cell goal,
+        int maxLen,
+        int interval,
+        int gain,
+        int cap,
+        IEnumerable<Cell> foods = null,
+        IEnumerable<Cell> mechCenters = null,
+        IEnumerable<int> mechLevels = null,
+        IEnumerable<Cell> obstacles = null,
+        int targetSteps = 0)
+    {
+        var spec = new LevelSpec
+        {
+            Origin = Cell.Zero,
+            Width = width,
+            Height = height,
+            Spawn = spawn,
+            Goal = goal,
+            InitialMaxLen = maxLen,
+            GrowthInterval = interval,
+            FoodLenGain = gain,
+            MechanismCap = cap,
+            TargetSteps = targetSteps,
+        };
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                spec.Floor.Add(new Cell(x, y));
+            }
+        }
+        if (obstacles != null)
+        {
+            spec.Obstacles.AddRange(obstacles);
+        }
+        if (foods != null)
+        {
+            spec.Foods.AddRange(foods);
+        }
+        if (mechCenters != null)
+        {
+            spec.MechCenters.AddRange(mechCenters);
+        }
+        if (mechLevels != null)
+        {
+            spec.MechInitialLevels.AddRange(mechLevels);
+        }
+        return spec;
+    }
+
+    private static Dictionary<int, string> LoadGoldenRoutes()
+    {
+        var routes = new Dictionary<int, string>();
+        string json = FileAccess.GetFileAsString("res://tests/fixtures/levels_expected.json");
+        if (string.IsNullOrEmpty(json))
+        {
+            return routes;
+        }
+        using JsonDocument doc = JsonDocument.Parse(json);
+        foreach (JsonElement level in doc.RootElement.GetProperty("levels").EnumerateArray())
+        {
+            routes[level.GetProperty("level_id").GetInt32()] =
+                level.GetProperty("route").GetString() ?? "";
+        }
+        return routes;
     }
 
     /// <summary>标签分类器：无机关样例 + 重复分类一致。</summary>

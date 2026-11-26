@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://c60nbwqp4usbk" path="res://Scripts/UI/LevelHUD.gd" id="1_hud"]
 [ext_resource type="Theme" uid="uid://k3r1m0vyqv5q" path="res://UI/Theme/GardenTheme.tres" id="3_theme"]
 [ext_resource type="Script" uid="uid://dqob88e71yqmj" path="res://Scripts/UI/JuicyButton.gd" id="4_button"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/SettingsOverlay.tscn" id="5_settings"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7ig1k"]
 bg_color = Color(0.972549, 0.9490196, 0.8627451, 1)
@@ -76,102 +77,110 @@ offset_bottom = 128.0
 grow_horizontal = 2
 mouse_filter = 2
 
-[node name="HBoxContainer" type="HBoxContainer" parent="Root/TopArea" unique_id=27681162]
+[node name="StatsPanel" type="PanelContainer" parent="Root/TopArea" unique_id=1005584400]
 layout_mode = 0
 offset_left = 23.0
-offset_top = 9.0
-offset_right = 851.0
-offset_bottom = 89.0
+offset_top = 18.0
+offset_right = 623.0
+offset_bottom = 102.0
+mouse_filter = 2
+theme_type_variation = &"SoftPanel"
 
-[node name="Label" type="Label" parent="Root/TopArea/HBoxContainer" unique_id=1633810609]
-custom_minimum_size = Vector2(160, 76)
+[node name="StatsRow" type="HBoxContainer" parent="Root/TopArea/StatsPanel" unique_id=1005584401]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.15294118, 0.30980393, 0.22352941, 1)
-theme_override_font_sizes/font_size = 34
-theme_override_styles/normal = SubResource("StyleBoxFlat_7ig1k")
+theme_override_constants/separation = 18
+
+[node name="RemainingBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584402]
+custom_minimum_size = Vector2(96, 0)
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="RemainingCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/RemainingBlock" unique_id=1005584403]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
+theme_override_font_sizes/font_size = 16
 text = "剩余步数"
-horizontal_alignment = 1
-vertical_alignment = 1
 
-[node name="RemainingCard" type="PanelContainer" parent="Root/TopArea/HBoxContainer" unique_id=1005584410]
-custom_minimum_size = Vector2(80, 80)
-layout_mode = 2
-mouse_filter = 2
-theme_type_variation = &"CounterCard"
-theme_override_styles/panel = SubResource("StyleBoxFlat_8yrgd")
-
-[node name="RemainingValue" type="Label" parent="Root/TopArea/HBoxContainer/RemainingCard" unique_id=1074521201]
+[node name="RemainingValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/RemainingBlock" unique_id=1005584404]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
-theme_override_font_sizes/font_size = 34
-text = "2"
-horizontal_alignment = 1
-vertical_alignment = 1
+theme_override_font_sizes/font_size = 26
+text = "0"
 
-[node name="space" type="Control" parent="Root/TopArea/HBoxContainer" unique_id=1655944570]
-custom_minimum_size = Vector2(30, 0)
+[node name="LengthBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584405]
+custom_minimum_size = Vector2(96, 0)
 layout_mode = 2
+theme_override_constants/separation = 0
 
-[node name="PetalLabel" type="Label" parent="Root/TopArea/HBoxContainer" unique_id=1633810610]
-custom_minimum_size = Vector2(160, 75)
+[node name="LengthCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/LengthBlock" unique_id=1005584406]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.15294118, 0.30980393, 0.22352941, 1)
-theme_override_font_sizes/font_size = 34
-theme_override_styles/normal = SubResource("StyleBoxFlat_7ig1k")
+theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
+theme_override_font_sizes/font_size = 16
+text = "身长"
+
+[node name="LengthValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/LengthBlock" unique_id=1005584407]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
+theme_override_font_sizes/font_size = 26
+text = "0/0"
+
+[node name="PetalBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584408]
+custom_minimum_size = Vector2(96, 0)
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="PetalCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/PetalBlock" unique_id=1005584409]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
+theme_override_font_sizes/font_size = 16
 text = "花瓣效益"
-horizontal_alignment = 1
-vertical_alignment = 1
 
-[node name="PetalCard" type="PanelContainer" parent="Root/TopArea/HBoxContainer" unique_id=1005584411]
-custom_minimum_size = Vector2(80, 80)
-layout_mode = 2
-mouse_filter = 2
-theme_type_variation = &"CounterCard"
-theme_override_styles/panel = SubResource("StyleBoxFlat_8yrgd")
-
-[node name="PetalValue" type="Label" parent="Root/TopArea/HBoxContainer/PetalCard" unique_id=1074521202]
+[node name="PetalValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/PetalBlock" unique_id=1005584410]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
-theme_override_font_sizes/font_size = 34
-text = "2"
-horizontal_alignment = 1
-vertical_alignment = 1
+theme_override_font_sizes/font_size = 26
+text = "0"
 
-[node name="space2" type="Control" parent="Root/TopArea/HBoxContainer" unique_id=1001643856]
-custom_minimum_size = Vector2(30, 0)
+[node name="GrowBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584411]
+custom_minimum_size = Vector2(96, 0)
 layout_mode = 2
+theme_override_constants/separation = 0
 
-[node name="GrowLabel" type="Label" parent="Root/TopArea/HBoxContainer" unique_id=1368424989]
-custom_minimum_size = Vector2(180, 75)
+[node name="GrowCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/GrowBlock" unique_id=1005584412]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.15294118, 0.30980393, 0.22352941, 1)
-theme_override_font_sizes/font_size = 34
-theme_override_styles/normal = SubResource("StyleBoxFlat_7ig1k")
-text = "距花丛生长"
-horizontal_alignment = 1
-vertical_alignment = 1
+theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
+theme_override_font_sizes/font_size = 16
+text = "距生长"
 
-[node name="GrowCard" type="PanelContainer" parent="Root/TopArea/HBoxContainer" unique_id=1715908551]
-custom_minimum_size = Vector2(80, 80)
-layout_mode = 2
-mouse_filter = 2
-theme_type_variation = &"CounterCard"
-theme_override_styles/panel = SubResource("StyleBoxFlat_8yrgd")
-
-[node name="GrowValue" type="Label" parent="Root/TopArea/HBoxContainer/GrowCard" unique_id=1291812189]
+[node name="GrowValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/GrowBlock" unique_id=1005584413]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
-theme_override_font_sizes/font_size = 34
-text = "6"
-horizontal_alignment = 1
-vertical_alignment = 1
+theme_override_font_sizes/font_size = 26
+text = "0"
+
+[node name="MechBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584414]
+custom_minimum_size = Vector2(96, 0)
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="MechCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/MechBlock" unique_id=1005584415]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
+theme_override_font_sizes/font_size = 16
+text = "花丛成长"
+
+[node name="MechValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/MechBlock" unique_id=1005584416]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
+theme_override_font_sizes/font_size = 26
+text = "0/0"
 
 [node name="ActionsPanel" type="PanelContainer" parent="Root/TopArea" unique_id=1118754327]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -350.0
+offset_left = -430.0
 offset_top = 19.0
 offset_right = -22.0
 offset_bottom = 84.0
@@ -181,18 +190,34 @@ theme_type_variation = &"SoftPanel"
 
 [node name="Actions" type="HBoxContainer" parent="Root/TopArea/ActionsPanel" unique_id=43556367]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 6
 
 [node name="RestartBtn" type="Button" parent="Root/TopArea/ActionsPanel/Actions" unique_id=216658123]
-custom_minimum_size = Vector2(140, 42)
+custom_minimum_size = Vector2(110, 42)
 layout_mode = 2
+focus_mode = 0
 text = "重新开始"
 script = ExtResource("4_button")
 
 [node name="BackBtn" type="Button" parent="Root/TopArea/ActionsPanel/Actions" unique_id=1375779957]
-custom_minimum_size = Vector2(154, 42)
+custom_minimum_size = Vector2(86, 42)
 layout_mode = 2
+focus_mode = 0
 text = "选关"
+script = ExtResource("4_button")
+
+[node name="HintBtn" type="Button" parent="Root/TopArea/ActionsPanel/Actions" unique_id=300000001]
+custom_minimum_size = Vector2(86, 42)
+layout_mode = 2
+focus_mode = 0
+text = "提示"
+script = ExtResource("4_button")
+
+[node name="PauseBtn" type="Button" parent="Root/TopArea/ActionsPanel/Actions" unique_id=300000035]
+custom_minimum_size = Vector2(86, 42)
+layout_mode = 2
+focus_mode = 0
+text = "暂停"
 script = ExtResource("4_button")
 
 [node name="LevelTitle" type="Label" parent="Root/TopArea" unique_id=1229292185]
@@ -239,7 +264,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Root/Overlay/Center" unique_id=1407226050]
-custom_minimum_size = Vector2(300, 480)
+custom_minimum_size = Vector2(380, 660)
 layout_mode = 2
 theme_type_variation = &"ResultPanel"
 
@@ -264,8 +289,93 @@ layout_mode = 2
 size_flags_horizontal = 4
 theme_override_styles/separator = SubResource("StyleBoxLine_8yrgd")
 
+[node name="RatingPanel" type="VBoxContainer" parent="Root/Overlay/Center/Panel/Content" unique_id=300000010]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="RatingTitle" type="Label" parent="Root/Overlay/Center/Panel/Content/RatingPanel" unique_id=300000011]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.5019608, 0.41568628, 1)
+theme_override_font_sizes/font_size = 22
+text = "关卡评分（0–100）"
+horizontal_alignment = 1
+
+[node name="RatingOption" type="OptionButton" parent="Root/Overlay/Center/Panel/Content/RatingPanel" unique_id=300000012]
+custom_minimum_size = Vector2(260, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="RatingNote" type="LineEdit" parent="Root/Overlay/Center/Panel/Content/RatingPanel" unique_id=300000013]
+custom_minimum_size = Vector2(300, 40)
+layout_mode = 2
+size_flags_horizontal = 4
+placeholder_text = "备注（可选）"
+
+[node name="RatingButtons" type="HBoxContainer" parent="Root/Overlay/Center/Panel/Content/RatingPanel" unique_id=300000014]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 8
+
+[node name="RatingConfirm" type="Button" parent="Root/Overlay/Center/Panel/Content/RatingPanel/RatingButtons" unique_id=300000015]
+custom_minimum_size = Vector2(140, 44)
+layout_mode = 2
+text = "确认记录"
+script = ExtResource("4_button")
+
+[node name="RatingSkip" type="Button" parent="Root/Overlay/Center/Panel/Content/RatingPanel/RatingButtons" unique_id=300000016]
+custom_minimum_size = Vector2(90, 44)
+layout_mode = 2
+text = "跳过"
+script = ExtResource("4_button")
+
+[node name="RatingResult" type="Label" parent="Root/Overlay/Center/Panel/Content/RatingPanel" unique_id=300000017]
+visible = false
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.5019608, 0.41568628, 1)
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="NextConfig" type="VBoxContainer" parent="Root/Overlay/Center/Panel/Content" unique_id=300000020]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TierRow" type="HBoxContainer" parent="Root/Overlay/Center/Panel/Content/NextConfig" unique_id=300000021]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TierLabel" type="Label" parent="Root/Overlay/Center/Panel/Content/NextConfig/TierRow" unique_id=300000022]
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+text = "下一关难度"
+vertical_alignment = 1
+
+[node name="NextTierOption" type="OptionButton" parent="Root/Overlay/Center/Panel/Content/NextConfig/TierRow" unique_id=300000023]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SeedRow" type="HBoxContainer" parent="Root/Overlay/Center/Panel/Content/NextConfig" unique_id=300000024]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SeedLabel" type="Label" parent="Root/Overlay/Center/Panel/Content/NextConfig/SeedRow" unique_id=300000025]
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+text = "种子"
+vertical_alignment = 1
+
+[node name="NextSeedInput" type="LineEdit" parent="Root/Overlay/Center/Panel/Content/NextConfig/SeedRow" unique_id=300000026]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "留空随机"
+max_length = 10
+
 [node name="space" type="Control" parent="Root/Overlay/Center/Panel/Content" unique_id=1836656232]
-custom_minimum_size = Vector2(0, 50)
+custom_minimum_size = Vector2(0, 10)
 layout_mode = 2
 
 [node name="NextBtn" type="Button" parent="Root/Overlay/Center/Panel/Content" unique_id=1028032292]
@@ -357,6 +467,57 @@ size_flags_horizontal = 4
 text = "重开"
 script = ExtResource("4_button")
 
+[node name="PauseNextConfig" type="VBoxContainer" parent="Root/PauseOverlay/Center/Panel/Content" unique_id=300000027]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TierRow" type="HBoxContainer" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig" unique_id=300000028]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TierLabel" type="Label" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig/TierRow" unique_id=300000029]
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+text = "下一关难度"
+vertical_alignment = 1
+
+[node name="PauseTierOption" type="OptionButton" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig/TierRow" unique_id=300000030]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SeedRow" type="HBoxContainer" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig" unique_id=300000031]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SeedLabel" type="Label" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig/SeedRow" unique_id=300000032]
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+text = "种子"
+vertical_alignment = 1
+
+[node name="PauseSeedInput" type="LineEdit" parent="Root/PauseOverlay/Center/Panel/Content/PauseNextConfig/SeedRow" unique_id=300000033]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "留空随机"
+max_length = 10
+
+[node name="NextButton" type="Button" parent="Root/PauseOverlay/Center/Panel/Content" unique_id=300000034]
+custom_minimum_size = Vector2(200, 54)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "下一关"
+script = ExtResource("4_button")
+
+[node name="SettingsButton" type="Button" parent="Root/PauseOverlay/Center/Panel/Content" unique_id=300000036]
+custom_minimum_size = Vector2(200, 54)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "设置"
+script = ExtResource("4_button")
+
 [node name="ExitButton" type="Button" parent="Root/PauseOverlay/Center/Panel/Content" unique_id=1595939876]
 custom_minimum_size = Vector2(200, 54)
 layout_mode = 2
@@ -367,7 +528,6 @@ script = ExtResource("4_button")
 [node name="TagList" type="Label" parent="Root" unique_id=216658126]
 visible = false
 layout_mode = 1
-anchors_preset = 0
 offset_left = 18.0
 offset_top = 140.0
 offset_right = 340.0
@@ -376,7 +536,6 @@ theme_override_colors/font_color = Color(1, 1, 1, 0.95)
 theme_override_colors/font_outline_color = Color(0.188, 0.4, 0.278, 1)
 theme_override_constants/outline_size = 4
 theme_override_font_sizes/font_size = 18
-text = ""
 
 [node name="DifficultyLabel" type="Label" parent="Root" unique_id=216658125]
 visible = false
@@ -408,5 +567,8 @@ offset_top = 92.0
 offset_right = -26.0
 offset_bottom = 138.0
 grow_horizontal = 0
+focus_mode = 0
 text = "复制种子"
 script = ExtResource("4_button")
+
+[node name="SettingsOverlay" parent="." instance=ExtResource("5_settings")]

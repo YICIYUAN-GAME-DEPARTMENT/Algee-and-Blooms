@@ -25,9 +25,7 @@ namespace Growth.Tools;
 /// </summary>
 public partial class GeneratorBench : Node
 {
-    private const int GeneratorVersion = 1;
     private const int ScoringVersion = 2;
-
     private static readonly string[] TagNames =
     {
         "false_shortcut", "gate_sequence", "forced_truncation", "overshoot_return",
@@ -46,7 +44,16 @@ public partial class GeneratorBench : Node
         int height = GetInt(args, "height", 0);
         int candidates = GetInt(args, "candidates", 1);
         int maxAttempts = GetInt(args, "attempts", 32);
-        int genver = GetInt(args, "genver", GeneratorVersion);
+        int genver = GetInt(args, "genver", GenerationService.GeneratorVersion);
+        bool checkDeterminism = GetInt(args, "determinism", 1) != 0;
+        bool gate = GetInt(args, "gate", 1) != 0;
+        GeneratorModel genModel = GetString(args, "generator", "route_first") switch
+        {
+            "template" or "structured" => GeneratorModel.TemplateField,
+            "physarum" or "flow" => GeneratorModel.Physarum,
+            "portfolio" or "hybrid" or "auto" => GeneratorModel.Portfolio,
+            _ => GeneratorModel.RouteFirst,
+        };
 
         if (tiers.Length == 0)
         {
@@ -76,6 +83,8 @@ public partial class GeneratorBench : Node
         var workUnits = new List<double>();
         var stepValues = new List<int>();
         int budgetAborted = 0;
+        var reasonCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var sourceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (string tag in TagNames)
         {
             tagCounts[tag] = 0;
@@ -94,12 +103,22 @@ public partial class GeneratorBench : Node
                     Difficulty = tier,
                     Candidates = candidates,
                     MaxAttempts = maxAttempts,
+                    GeneratorModel = genModel,
+                    LevelIndex = (int)(seed - 1),
+                    EnableFairnessGate = gate,
                 };
 
                 var watch = Stopwatch.StartNew();
-                GenerationResult result = RouteFirstGenerator.GenerateCore(cfg);
+                var job = new GenerationJob(cfg, GenerationBudget.Unlimited());
+                GenerationResult result = job.RunToCompletion();
                 watch.Stop();
                 timings.Add(watch.Elapsed.TotalMilliseconds);
+                foreach (KeyValuePair<string, int> rc in job.ReasonCounts)
+                {
+                    reasonCounts[rc.Key] = reasonCounts.TryGetValue(rc.Key, out int rn)
+                        ? rn + rc.Value
+                        : rc.Value;
+                }
 
                 var row = new JsonObject
                 {
@@ -120,10 +139,26 @@ public partial class GeneratorBench : Node
                 }
 
                 string specJson = result.Spec.ToJson();
-                GenerationResult second = RouteFirstGenerator.GenerateCore(cfg);
-                bool same = second.Success
-                    && second.Spec.ToJson() == specJson
-                    && second.Solution.Route == result.Solution.Route;
+                bool same = true;
+                if (checkDeterminism)
+                {
+                    var secondCfg = new GeneratorConfig
+                    {
+                        Seed = seed,
+                        Width = width,
+                        Height = height,
+                        Difficulty = tier,
+                        Candidates = candidates,
+                        MaxAttempts = maxAttempts,
+                        GeneratorModel = genModel,
+                        LevelIndex = (int)(seed - 1),
+                        EnableFairnessGate = gate,
+                    };
+                    GenerationResult second = RouteFirstGenerator.GenerateCore(secondCfg);
+                    same = second.Success
+                        && second.Spec.ToJson() == specJson
+                        && second.Solution.Route == result.Solution.Route;
+                }
                 determinismOk &= same;
 
                 bool replayOk = Replay(specJson, result.Solution.Route);
@@ -132,6 +167,7 @@ public partial class GeneratorBench : Node
                 row["height"] = result.Spec.Height;
                 row["schema_version"] = result.Spec.SchemaVersion;
                 row["tier_label"] = result.Spec.Tier;
+                row["generation_source"] = result.Spec.GenerationSource;
                 row["param_signature"] = result.Spec.ParamSignature;
                 row["target_steps"] = result.Spec.TargetSteps;
                 row["attempts_used"] = result.Attempts;
@@ -190,6 +226,11 @@ public partial class GeneratorBench : Node
                     stepValues.Add(result.Solution.Steps);
                     string sizeKey = $"{result.Spec.Width}x{result.Spec.Height}";
                     sizeCounts[sizeKey] = sizeCounts.TryGetValue(sizeKey, out int sc) ? sc + 1 : 1;
+                    string source = result.Spec.GenerationSource;
+                    if (!string.IsNullOrEmpty(source))
+                    {
+                        sourceCounts[source] = sourceCounts.TryGetValue(source, out int src) ? src + 1 : 1;
+                    }
                 }
                 else
                 {
@@ -212,6 +253,9 @@ public partial class GeneratorBench : Node
                 ["height"] = height,
                 ["candidates"] = candidates,
                 ["max_attempts"] = maxAttempts,
+                ["generator"] = genModel.ToString(),
+                ["gate"] = gate,
+                ["determinism_checked"] = checkDeterminism,
             },
             ["seeds"] = seedRows,
         };
@@ -236,7 +280,7 @@ public partial class GeneratorBench : Node
                 ["p95"] = Round3(Percentile(sortedTimings, 0.95)),
                 ["max"] = Round3(sortedTimings.Count > 0 ? sortedTimings[^1] : 0),
             },
-            ["per_tier"] = PerTierJson(perTier),
+            ["per_tier"] = PerTierJson(perTier, seedsPerTier),
             ["score_hist"] = ScoreHistJson(perTier),
             ["score_hist5"] = ScoreHist5Json(allScores),
             ["score_stats"] = ScoreStatsJson(allScores),
@@ -245,6 +289,9 @@ public partial class GeneratorBench : Node
             ["budget"] = BudgetJson(workUnits, budgetAborted),
             ["size_hist"] = SizeHistJson(sizeCounts),
             ["tag_coverage"] = TagCoverageJson(tagCounts, ok),
+            ["fail_reasons"] = ReasonJson(reasonCounts),
+            ["source_counts"] = SizeHistJson(sourceCounts),
+            ["determinism_checked"] = checkDeterminism,
         };
 
         string benchPath = outDir.TrimEnd('/') + $"/bench_gv{genver}.json";
@@ -265,6 +312,13 @@ public partial class GeneratorBench : Node
             GD.Print($"[GeneratorBench] steps min={stepStats.Min} median={stepStats.Median:F0} max={stepStats.Max}");
             GD.Print($"[GeneratorBench] target miss={targetMissCount / (double)Math.Max(1, targetDeltas.Count):P1} " +
                      $"mean_delta={(targetDeltas.Count > 0 ? targetDeltas.Sum() / (double)targetDeltas.Count : 0):F1}");
+        }
+        if (reasonCounts.Count > 0)
+        {
+            foreach (KeyValuePair<string, int> kv in reasonCounts.OrderByDescending(kv => kv.Value).Take(5))
+            {
+                GD.Print($"[GeneratorBench] fail_reason {kv.Key} x{kv.Value}");
+            }
         }
         GD.Print($"[GeneratorBench] out={benchPath}");
 
@@ -311,7 +365,7 @@ public partial class GeneratorBench : Node
         return obj;
     }
 
-    private static JsonObject PerTierJson(Dictionary<string, List<int>> perTier)
+    private static JsonObject PerTierJson(Dictionary<string, List<int>> perTier, int seedsPerTier)
     {
         var obj = new JsonObject();
         foreach (string tier in perTier.Keys.OrderBy(k => k, StringComparer.Ordinal))
@@ -322,11 +376,25 @@ public partial class GeneratorBench : Node
             obj[tier] = new JsonObject
             {
                 ["n"] = scores.Count,
+                ["ok"] = scores.Count,
+                ["fail"] = Math.Max(0, seedsPerTier - scores.Count),
+                ["ok_ratio"] = seedsPerTier > 0 ? Round3(scores.Count / (double)seedsPerTier) : 0,
                 ["min"] = scores.Count > 0 ? scores.Min() : 0,
                 ["max"] = scores.Count > 0 ? scores.Max() : 0,
                 ["mean"] = Round3(mean),
                 ["stddev"] = Round3(StdDev(values, mean)),
             };
+        }
+        return obj;
+    }
+
+    private static JsonObject ReasonJson(Dictionary<string, int> counts)
+    {
+        var obj = new JsonObject();
+        foreach (KeyValuePair<string, int> kv in counts.OrderByDescending(kv => kv.Value)
+                     .ThenBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            obj[kv.Key] = kv.Value;
         }
         return obj;
     }

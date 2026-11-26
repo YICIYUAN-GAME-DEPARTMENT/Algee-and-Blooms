@@ -9,6 +9,8 @@ namespace Growth.Algorithms;
 public static class MechanicShapes
 {
     public const int MaxLevel = 4;
+    /// <summary>机关初始阶段下限（负值只改核心颜色，不扩张、不占格）。玩法权威见功能需求 §4.2.5。</summary>
+    public const int MinLevel = -10;
 
     /// <summary>格子 d 第一次进入机关形状的阶段；> MaxLevel 表示永不覆盖。</summary>
     public static int CoverLevel(Cell d)

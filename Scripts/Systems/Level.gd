@@ -50,6 +50,8 @@ var _story_active := false
 var grid := GridSystem.new()
 var _board_origin := Vector2i.ZERO
 var _board_size := Vector2i.ZERO
+## 本关花丛最高阶段（cap），供 HUD 展示
+var _mech_cap := 0
 
 var _mechanisms: Array = []
 var _foods: Array = []
@@ -57,6 +59,12 @@ var _goal: Goal = null
 var _spawn: PlayerSpawn = null
 ## 剧情覆盖层（运行时懒实例化的 DialogueOverlay）
 var _dialogue: DialogueOverlay = null
+## 解法提示覆盖层（运行时懒实例化）
+var _hint_overlay: HintOverlay = null
+var _hint_route := ""
+var _hint_cache_ready := false
+var _hint_used_count := 0
+var _hint_first_step := -1
 
 ## 表现层只读别名（权威数据在 state）
 var trail: Array[Vector2i]:
@@ -133,6 +141,7 @@ const HEAD_IDLE_SEC := 0.35
 const HEAD_FRAME_HOLD_SEC := 0.18
 ## 剧情覆盖层场景（运行时按需实例，场景树见 Scenes/Dialogue/DialogueOverlay.tscn）
 const DIALOGUE_SCENE_PATH := "res://Scenes/Dialogue/DialogueOverlay.tscn"
+const HINT_OVERLAY_SCENE := preload("res://Scenes/UI/HintOverlay.tscn")
 
 const PLAYER_SPAWN_SCENE := preload("res://Scenes/Entities/PlayerSpawn.tscn")
 const GOAL_SCENE := preload("res://Scenes/Entities/Goal.tscn")
@@ -149,7 +158,7 @@ var generated_active := false
 @onready var _player_fx: Node2D = $World/PlayerFx
 @onready var _head_sprite: Sprite2D = $World/PlayerFx/Head
 @onready var _tail_sprite: Sprite2D = $World/PlayerFx/Tail
-@onready var _hud: CanvasLayer = $LevelHUD
+@onready var _hud: LevelHUD = $LevelHUD
 
 
 func _ready() -> void:
@@ -172,10 +181,19 @@ func _ready() -> void:
 	# LevelHUD 同理：作者可能整层隐藏便于编辑；运行时必须显示，否则顶栏/
 	# 结算面板/暂停菜单全部不可见（剧情播完后"弹不出胜利/失败界面"的根因之一）。
 	_hud.visible = true
+	_hud.hint_toggled.connect(toggle_hint)
+	_hud.rating_submitted.connect(_on_rating_submitted)
+	_hud.set_hint_available(true)
+	if generated_active:
+		_hud.set_rating_context(GameManager.generated_score,
+				GameManager.generated_generation_mode, GameManager.generated_template_id)
+	else:
+		_hud.set_rating_context(0, "handmade", "")
 	if generated_active:
 		_hud.set_difficulty(GameManager.generated_score, GameManager.generated_steps,
 				GameManager.generated_model_label(), GameManager.generated_generator_label(),
-				GameManager.generated_score_tier_label())
+				GameManager.generated_score_tier_label(), GameManager.generated_generation_mode,
+				GameManager.generated_tier)
 		_hud.set_generated_seed(GameManager.generated_seed)
 		_hud.set_tags(GameManager.generated_tags)
 		_fit_camera_to_generated_board()
@@ -500,6 +518,7 @@ func _place_player() -> void:
 		initial_levels.append(m.initial_level)
 
 	var cap := _resolve(mechanism_max_level_override, GameManager.balance.mechanism_max_level)
+	_mech_cap = cap
 	var l0 := _resolve(initial_max_len_override, GameManager.balance.initial_max_len)
 	var interval := _resolve(growth_step_interval_override, GameManager.balance.growth_step_interval)
 	var gain := _resolve(food_len_gain_override, GameManager.balance.food_len_gain)
@@ -508,6 +527,7 @@ func _place_player() -> void:
 	_hud.set_growth_visible(state.has_mechanisms())
 	_update_hud()
 	_sync_mech_layer()
+	_sync_mech_levels()
 	_pop_mech_cells(added)  # 范围初建同样播一次出场动画
 
 
@@ -544,6 +564,16 @@ func _sync_mech_layer() -> void:
 		_mech_cells.clear()
 		return
 	_paint_auto(_mech_cells, cells, MECH_FRAME_DONE)
+
+
+## 同步机关核心颜色：负阶段染蓝（越负越深），≥0 保持原色。
+func _sync_mech_levels() -> void:
+	if _mechanisms.is_empty():
+		return
+	var levels: Array = state.get_mech_levels()
+	for i in _mechanisms.size():
+		if i < levels.size():
+			_mechanisms[i].set_current_level(int(levels[i]))
 
 
 ## 同步玩家视觉：
@@ -662,12 +692,18 @@ func _corner_col(a: Vector2i, b: Vector2i) -> int:
 
 
 # ── 输入（回合制单步）──────────────────────────────────────────
-func _unhandled_input(event: InputEvent) -> void:
+## 用 _input 而不是 _unhandled_input：方向键同时是 ui_up/down/left/right，
+## 若留到 GUI 之后，按钮获得焦点时方向键会被"按钮间切换焦点"吃掉，玩家就无法移动。
+func _input(event: InputEvent) -> void:
 	# 节点已脱离场景树（切场景瞬间）时不再处理输入，避免空 Viewport
 	var vp := get_viewport()
-	if vp == null:
+	if vp == null or vp.is_input_handled():
 		return
 	if event.is_action_pressed("restart") and not event.is_echo():
+		# 结算 / 暂停 / 设置弹窗打开时忽略 R，避免误触重开。
+		if _hud.is_modal_open():
+			vp.set_input_as_handled()
+			return
 		GameManager.restart_level()
 		vp.set_input_as_handled()
 		return
@@ -729,6 +765,7 @@ func _growth_sequence(res: LevelState.StepResult) -> void:
 		t.tween_property(m, "scale", Vector2(1.18, 1.18), dur * 0.4)
 		t.tween_property(m, "scale", Vector2.ONE, dur * 0.6)
 	_sync_mech_layer()
+	_sync_mech_levels()
 	_pop_mech_cells(res.added_mech_cells)
 	EventManager.mechanism_grew.emit(state.get_max_mech_level())
 	await get_tree().create_timer(dur).timeout
@@ -749,6 +786,8 @@ func _win() -> void:
 	if not story_win.is_empty():
 		await _play_story(story_win)
 	if is_instance_valid(_hud) and _hud.is_inside_tree():
+		_hide_hint()
+		_hud.set_hint_available(false)
 		_hud.show_result("胜利！ 步数 %d" % steps, true)
 
 
@@ -761,6 +800,8 @@ func _fail(msg: String = "无路可走… 重开吧") -> void:
 	if not story_fail.is_empty():
 		await _play_story(story_fail)
 	if is_instance_valid(_hud) and _hud.is_inside_tree():
+		_hide_hint()
+		_hud.set_hint_available(false)
 		_hud.show_result(msg)
 
 
@@ -770,6 +811,7 @@ func _play_story(story_path: String) -> void:
 	if overlay == null:
 		return
 	if is_instance_valid(_hud):
+		_hud.set_hint_available(false)
 		_hud.set_dialogue_active(true)
 	overlay.finished.connect(_on_story_done, CONNECT_ONE_SHOT)
 	overlay.play(story_path)
@@ -779,6 +821,8 @@ func _play_story(story_path: String) -> void:
 func _on_story_done(_completed: bool) -> void:
 	if is_instance_valid(_hud):
 		_hud.set_dialogue_active(false)
+		if not finished:
+			_hud.set_hint_available(true)
 
 
 func _ensure_dialogue() -> DialogueOverlay:
@@ -792,7 +836,187 @@ func _ensure_dialogue() -> DialogueOverlay:
 	return _dialogue
 
 
+func _ensure_hint_overlay() -> void:
+	if _hint_overlay != null:
+		return
+	_hint_overlay = HINT_OVERLAY_SCENE.instantiate() as HintOverlay
+	$World.add_child(_hint_overlay)
+	if _player_cells != null:
+		$World.move_child(_hint_overlay, _player_cells.get_index())
+	_hint_overlay.visible = false
+
+
+## 显示 / 隐藏解法提示；路线只做视觉引导，不移动玩家、不改变规则
+func toggle_hint() -> void:
+	if finished or _story_active:
+		return
+	_ensure_hint_overlay()
+	if _hint_overlay.visible:
+		_hint_overlay.hide_route()
+		_hud.set_hint_active(false)
+		return
+	var route := _route_for_hint()
+	if route.is_empty():
+		_hud.set_hint_available(false)
+		return
+	_hint_used_count += 1
+	if _hint_first_step < 0:
+		_hint_first_step = state.steps
+	_hint_overlay.show_route(route, state.spawn_cell, state.head)
+	_hud.set_hint_active(true)
+
+
+func _hide_hint() -> void:
+	if _hint_overlay != null and is_instance_valid(_hint_overlay):
+		_hint_overlay.hide_route()
+	if is_instance_valid(_hud):
+		_hud.set_hint_active(false)
+
+
+## 随机关卡直接用生成时的规范解；手编关卡首次点击时求解并缓存
+func _route_for_hint() -> String:
+	if generated_active:
+		return GameManager.generated_route
+	if _hint_cache_ready:
+		return _hint_route
+	_hint_cache_ready = true
+	var solved: Dictionary = state.solve_exact(1_200_000)
+	var status := str(solved.get("status", ""))
+	if status == "UNKNOWN":
+		solved = state.solve_exact(4_000_000)
+		status = str(solved.get("status", ""))
+	if status == "SOLVABLE":
+		_hint_route = str(solved.get("route", ""))
+	else:
+		_hint_route = ""
+	return _hint_route
+
+
+func _on_rating_submitted(score: int, confidence: String, notes: String) -> void:
+	var record := _build_rating_record(score, confidence, notes)
+	var ok := RatingStore.write_record(record)
+	var alg := int(record.get("algorithm_score", 0))
+	var mode := str(record.get("generation_mode", ""))
+	if is_instance_valid(_hud):
+		_hud.set_rating_recorded(score, alg, mode)
+	if not ok:
+		push_warning("Level: 评分记录写入失败（%s）" % RatingStore.ratings_dir())
+
+
+func _build_rating_record(score: int, confidence: String, notes: String) -> Dictionary:
+	var spec: Dictionary = {}
+	var route := ""
+	var target_steps := 0
+	var algorithm_score := 0
+	var generation_mode := "handmade"
+	var template_id := ""
+	var seed_value := 0
+	var tier := "handmade"
+	if generated_active:
+		var parsed: Variant = JSON.parse_string(GameManager.generated_spec_json)
+		if typeof(parsed) == TYPE_DICTIONARY:
+			spec = parsed
+			target_steps = int(spec.get("target_steps", 0))
+		route = GameManager.generated_route
+		algorithm_score = GameManager.generated_score
+		generation_mode = GameManager.generated_generation_mode
+		template_id = GameManager.generated_template_id
+		seed_value = GameManager.generated_seed
+		tier = GameManager.generated_tier
+	else:
+		spec = build_spec_snapshot()
+		route = _route_for_hint()
+	var rating_id := "%s-%04d" % [
+		Time.get_datetime_string_from_system().replace(":", "-"),
+		Time.get_ticks_msec() % 10000,
+	]
+	return {
+		"schema_version": RatingStore.SCHEMA_VERSION,
+		"rating_id": rating_id,
+		"created_at": Time.get_datetime_string_from_system(),
+		"session_id": RatingStore.session_id(),
+		"app_version": "0.1.0",
+		"generator_version": 11,
+		"scoring_version": 6,
+		"calibration_version": 1,
+		"generation_mode": generation_mode,
+		"template_id": template_id,
+		"requested_mode": GameManager.generated_requested_mode if generated_active else "handmade",
+		"free_field_params": null,
+		"novelty": 0.0,
+		"seed": seed_value,
+		"tier": tier,
+		"spec": spec,
+		"route": route,
+		"steps": state.steps,
+		"target_steps": target_steps,
+		"algorithm_score": algorithm_score,
+		"algorithm_features": GameManager.generated_features if generated_active else {},
+		"human_score": null if score < 0 else score,
+		"human_score_10": null,
+		"human_scale": "0-100-step-10",
+		"human_confidence": confidence,
+		"human_notes": notes,
+		"hint_used": _hint_used_count > 0,
+		"hint_count": _hint_used_count,
+		"attempts": 0,
+		"completed": finished,
+		"time_sec": 0,
+	}
+
+
+## 手编关卡的地图快照（评分训练集用；与生成器 LevelSpec 字段对齐）
+func build_spec_snapshot() -> Dictionary:
+	var floor_cells: Array = []
+	for raw in grid.floor_cells.keys():
+		var c: Vector2i = raw
+		floor_cells.append([c.x, c.y])
+	var obstacle_cells: Array = []
+	for raw in grid.obstacles.keys():
+		var c: Vector2i = raw
+		obstacle_cells.append([c.x, c.y])
+	var foods: Array = []
+	for f in _foods:
+		foods.append([f.cell.x, f.cell.y])
+	var centers: Array = []
+	var levels: Array = []
+	for m in _mechanisms:
+		centers.append([m.cell.x, m.cell.y])
+		levels.append(m.initial_level)
+	var cap := _resolve(mechanism_max_level_override, GameManager.balance.mechanism_max_level)
+	var l0 := _resolve(initial_max_len_override, GameManager.balance.initial_max_len)
+	var interval := _resolve(growth_step_interval_override, GameManager.balance.growth_step_interval)
+	var gain := _resolve(food_len_gain_override, GameManager.balance.food_len_gain)
+	return {
+		"schema_version": 2,
+		"generator_version": 0,
+		"seed": 0,
+		"level_id": level_id,
+		"name": level_name,
+		"tier": "handmade",
+		"origin": [grid.origin.x, grid.origin.y],
+		"width": grid.size.x,
+		"height": grid.size.y,
+		"floor": floor_cells,
+		"obstacles": obstacle_cells,
+		"spawn": [_spawn.cell.x, _spawn.cell.y] if _spawn != null else [0, 0],
+		"goal": [_goal.cell.x, _goal.cell.y] if _goal != null else [0, 0],
+		"foods": foods,
+		"mech_centers": centers,
+		"mech_initial_levels": levels,
+		"initial_max_len": l0,
+		"food_len_gain": gain,
+		"growth_interval": interval,
+		"mechanism_cap": cap,
+		"target_steps": 0,
+		"param_signature": "",
+	}
+
+
 func _update_hud() -> void:
 	_hud.update_remaining_steps(state.get_remaining_steps())
+	_hud.set_length(state.trail.size(), state.max_len)
 	_hud.set_growth_countdown(state.get_growth_countdown())
+	_hud.set_mech_status(state.get_max_mech_level(), _mech_cap)
 	_hud.set_petal_gain(state.food_len_gain)
+	_hud.set_petal_visible(not _foods.is_empty())

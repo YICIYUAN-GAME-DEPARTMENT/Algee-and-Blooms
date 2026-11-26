@@ -40,6 +40,8 @@ public sealed class LevelSpec
     public Dictionary<string, string> TagEvidence { get; set; } = new();
     /// <summary>生成时的目标步数（真实最短路，可追溯）。</summary>
     public int TargetSteps { get; set; }
+    /// <summary>v4 调度来源：structured / noise / hybrid（空 = 未标记）。只读标注，不参与规则。</summary>
+    public string GenerationSource { get; set; } = "";
     /// <summary>实际消耗的工作单元数（S6 起填充）。</summary>
     public int BudgetUnits { get; set; }
     /// <summary>参数规范串：L0|Gain|I|cap|a_k。</summary>

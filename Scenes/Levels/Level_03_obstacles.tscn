@@ -75,12 +75,6 @@ texture = ExtResource("10_tgogr")
 
 [node name="LevelHUD" parent="." unique_id=1443197510 instance=ExtResource("11_10kwj")]
 
-[node name="GrowLabel" parent="LevelHUD/Root/TopArea/HBoxContainer" parent_id_path=PackedInt32Array(1443197510, 27681162) index="6" unique_id=1368424989]
-visible = false
-
-[node name="GrowCard" parent="LevelHUD/Root/TopArea/HBoxContainer" parent_id_path=PackedInt32Array(1443197510, 27681162) index="7" unique_id=1715908551]
-visible = false
-
 [node name="Cam" type="Camera2D" parent="." unique_id=962089457]
 position = Vector2(640, 360)
 zoom = Vector2(1.5, 1.5)

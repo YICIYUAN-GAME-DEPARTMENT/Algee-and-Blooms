@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 670" width="100%" height="auto" role="img" aria-labelledby="state-machine-title state-machine-desc">
+  <title id="state-machine-title">算法执行状态机：模板 → 机关场 → S/E → 公平性 → 验证 → 评分</title>
+  <desc id="state-machine-desc">生成算法 v3（模板 / 自由混合）与评分算法 v3 的阶段级状态机。主路径为 FIELD（地形、模板或自由场、机关场）→ PAIR（建 R1、选 S/E、R2 验证）→ FAIR + FOOD（图扩散、AUC、食物与诱饵）→ VERIFY + SCORE（R2 重放、H、交互项、PCHIP 校准）→ ARCHIVE → EMIT。失败或下一候选通过左侧虚线回到 FIELD；全部失败进入 FALLBACK，RouteFirst 成功则输出，否则 FAIL。</desc>
+  <style>
+    :root {
+      color-scheme: light;
+      --surface: #F7F7F8;
+      --surface-muted: #EFEFF2;
+      --text: #171717;
+      --text-muted: #52525B;
+      --border: rgba(23, 23, 23, 0.12);
+      --brand: #0FDC78;
+      --brand-soft: #E5FFF2;
+      --brand-text: #004D26;
+      --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    :root[data-widget-theme="dark"] {
+      color-scheme: dark;
+      --surface: #171717;
+      --surface-muted: #262626;
+      --text: #E5E5E5;
+      --text-muted: #A1A1AA;
+      --border: rgba(229, 229, 229, 0.12);
+      --brand: #32F08C;
+      --brand-soft: #004D26;
+      --brand-text: #E5FFF2;
+    }
+    .state > rect {
+      fill: var(--surface);
+      stroke: var(--border);
+      stroke-width: 1.5;
+    }
+    .state-brand > rect {
+      fill: var(--brand-soft);
+      stroke: var(--brand);
+      stroke-width: 1.5;
+    }
+    .state-terminal > rect {
+      fill: var(--surface-muted);
+      stroke: var(--border);
+      stroke-width: 1.5;
+    }
+    .th {
+      fill: var(--text);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .ts {
+      fill: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .state-brand > .th,
+    .state-brand > .ts {
+      fill: var(--brand-text);
+    }
+    .arr {
+      stroke: var(--text-muted);
+      stroke-width: 1.5;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .retry {
+      stroke: var(--text-muted);
+      stroke-width: 1.5;
+      fill: none;
+      stroke-dasharray: 5 4;
+      stroke-linecap: round;
+    }
+    .note,
+    .legend {
+      fill: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .start {
+      fill: var(--text);
+    }
+  </style>
+  <defs>
+    <marker id="sm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M1 1 L7 4 L1 7 Z" fill="var(--text-muted)"/>
+    </marker>
+  </defs>
+
+  <text class="th" x="40" y="32">算法执行状态机：模板 → 机关场 → S/E → 公平性 → 验证 → 评分</text>
+  <text class="note" x="40" y="60">缓存命中 → 直接返回</text>
+  <circle class="start" cx="360" cy="56" r="6"/>
+  <path class="arr" d="M360 62 V74" marker-end="url(#sm-arrow)"/>
+
+  <g class="state-brand">
+    <rect x="180" y="80" width="360" height="64" rx="8"/>
+    <text class="th" x="200" y="106">FIELD 模板 / 自由 + 机关场</text>
+    <text class="ts" x="200" y="126">BUILD_BASE → 模板 / 自由场 → PLACE_MECHS</text>
+  </g>
+  <path class="arr" d="M360 144 V170" marker-end="url(#sm-arrow)"/>
+
+  <g class="state">
+    <rect x="180" y="176" width="360" height="64" rx="8"/>
+    <text class="th" x="200" y="202">PAIR 选择 S/E</text>
+    <text class="ts" x="200" y="222">BUILD_R1 → 候选对筛选 → R2 验证</text>
+  </g>
+  <path class="arr" d="M360 240 V266" marker-end="url(#sm-arrow)"/>
+
+  <g class="state">
+    <rect x="180" y="272" width="360" height="64" rx="8"/>
+    <text class="th" x="200" y="298">FAIR + FOOD</text>
+    <text class="ts" x="200" y="318">图扩散 / AUC → 食物 / 诱饵</text>
+  </g>
+  <path class="arr" d="M360 336 V362" marker-end="url(#sm-arrow)"/>
+
+  <g class="state-brand">
+    <rect x="180" y="368" width="360" height="64" rx="8"/>
+    <text class="th" x="200" y="394">VERIFY + SCORE</text>
+    <text class="ts" x="200" y="414">R2 重放 → H / 交互项 / PCHIP</text>
+  </g>
+  <path class="arr" d="M360 432 V458" marker-end="url(#sm-arrow)"/>
+
+  <g class="state">
+    <rect x="180" y="464" width="360" height="64" rx="8"/>
+    <text class="th" x="200" y="490">ARCHIVE → EMIT</text>
+    <text class="ts" x="200" y="510">MAP-Elites 选优 → JSON / 缓存</text>
+  </g>
+
+  <path class="retry" d="M140 112 V588"/>
+  <path class="retry" d="M140 112 H174" marker-end="url(#sm-arrow)"/>
+  <path class="retry" d="M180 208 H140"/>
+  <path class="retry" d="M180 304 H140"/>
+  <path class="retry" d="M180 400 H140"/>
+  <path class="retry" d="M180 496 H140"/>
+  <path class="retry" d="M140 588 H174" marker-end="url(#sm-arrow)"/>
+  <circle class="start" cx="140" cy="208" r="3"/>
+  <circle class="start" cx="140" cy="304" r="3"/>
+  <circle class="start" cx="140" cy="400" r="3"/>
+  <circle class="start" cx="140" cy="496" r="3"/>
+
+  <g class="state">
+    <rect x="180" y="560" width="180" height="56" rx="8"/>
+    <text class="th" x="200" y="584">FALLBACK</text>
+    <text class="ts" x="200" y="604">RouteFirst 基线</text>
+  </g>
+  <g class="state-terminal">
+    <rect x="380" y="560" width="180" height="56" rx="28"/>
+    <text class="th" x="400" y="584">FAIL</text>
+    <text class="ts" x="400" y="604">报错（终态）</text>
+  </g>
+  <path class="arr" d="M270 560 V534" marker-end="url(#sm-arrow)"/>
+  <text class="note" x="278" y="550">ok</text>
+  <path class="arr" d="M360 588 H374" marker-end="url(#sm-arrow)"/>
+
+  <text class="legend" x="40" y="640">阶段级视图；实线 = 主路径；虚线 = 重试 / 下一候选。</text>
+  <text class="legend" x="40" y="656">子状态与详细转移见规范 §3.3；缓存命中在入口直接返回。</text>
+</svg>

@@ -9,21 +9,27 @@ script = ExtResource("1_sfx")
 [node name="Type" type="AudioStreamPlayer" parent="."]
 volume_db = -19.0
 max_polyphony = 4
+bus = &"SFX"
 
 [node name="Step" type="AudioStreamPlayer" parent="."]
 volume_db = -14.0
 max_polyphony = 3
+bus = &"SFX"
 
 [node name="Pick" type="AudioStreamPlayer" parent="."]
 volume_db = -10.0
 max_polyphony = 2
+bus = &"SFX"
 
 [node name="Win" type="AudioStreamPlayer" parent="."]
 volume_db = -9.0
+bus = &"SFX"
 
 [node name="Lose" type="AudioStreamPlayer" parent="."]
 volume_db = -9.0
+bus = &"SFX"
 
 [node name="Grow" type="AudioStreamPlayer" parent="."]
 volume_db = -11.0
 max_polyphony = 2
+bus = &"SFX"

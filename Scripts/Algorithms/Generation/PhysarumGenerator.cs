@@ -11,6 +11,10 @@ public enum GeneratorModel
     RouteFirst,
     /// <summary>黏菌枝干：先算模糊枝干网络，选最粗枝干做假主干，真解落在次粗枝干。</summary>
     Physarum,
+    /// <summary>机关优先 + 模板（v3）：先放机关场，再选 S/E 与见证路线。</summary>
+    TemplateField,
+    /// <summary>v4 Portfolio：按档位比例在结构化模板与噪波负型之间确定性调度。</summary>
+    Portfolio,
 }
 
 /// <summary>
@@ -200,6 +204,8 @@ public static class PhysarumGenerator
         {
             Success = true,
             Spec = spec,
+            GenerationMode = "physarum",
+            TemplateId = "physarum",
             Solution = new LevelSolution
             {
                 Status = "SOLVABLE",

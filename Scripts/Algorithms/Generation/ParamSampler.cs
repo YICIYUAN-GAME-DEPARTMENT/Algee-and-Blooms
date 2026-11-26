@@ -42,9 +42,11 @@ public static class ParamSampler
 
             var levels = new List<int>(mechCount);
             bool levelsOk = true;
+            // 允许负起始阶段（最低 MechanicShapes.MinLevel）：负值只作生长倒计时。
+            int minA = -Math.Min(4, Math.Max(0, targetSteps / interval / 2));
             for (int k = 0; k < mechCount; k++)
             {
-                int a = rng.NextInt(cap + 1);
+                int a = minA + rng.NextInt(cap - minA + 1);
                 if (cap - a < 1)
                 {
                     levelsOk = false;

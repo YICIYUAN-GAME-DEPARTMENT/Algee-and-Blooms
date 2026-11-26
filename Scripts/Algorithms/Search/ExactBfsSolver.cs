@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Godot;
+using Growth.Algorithms.Generation;
 
 namespace Growth.Algorithms.Search;
 
@@ -103,10 +104,20 @@ public partial class ExactBfsSolver : RefCounted
 
     private readonly Dictionary<(int G, int Shielded), Connectivity> _connCache = new();
 
+    /// <summary>
+    /// 要求胜利时必须已吃指定食物（按 InitialFoodList / LevelSpec.Foods 下标）；-1 = 不要求。
+    /// 用于设计公平门的“诱饵必败”证明：只接受吃完诱饵后仍能到终点的路线。
+    /// </summary>
+    public int RequiredFoodIndex { get; set; } = -1;
+
     /// <summary>求解入口。status: SOLVABLE / UNSOLVABLE / UNKNOWN。</summary>
     public Godot.Collections.Dictionary Solve(RuleState state, int budget)
     {
         Setup(state);
+        if (RequiredFoodIndex >= _foodCells.Count)
+        {
+            return Result("UNKNOWN", 0, "必需食物下标超出范围");
+        }
         if (_foodCells.Count > 31)
         {
             return Result("UNKNOWN", 0, "食物超过 31 个，当前位图模型不支持");
@@ -132,12 +143,17 @@ public partial class ExactBfsSolver : RefCounted
         var queue = new List<SearchState> { start };
         var visited = new Dictionary<StateKey, int> { [Key(start)] = 0 };
         int qi = 0;
+        int expansions = 0;
 
         while (qi < queue.Count)
         {
             if (queue.Count > budget)
             {
                 return Result("UNKNOWN", queue.Count, "超出节点预算");
+            }
+            if ((++expansions & 0x3FF) == 0 && GenerationTrace.Expired)
+            {
+                return Result("UNKNOWN", queue.Count, "超出单次尝试时间片");
             }
 
             SearchState s = queue[qi];
@@ -147,7 +163,12 @@ public partial class ExactBfsSolver : RefCounted
             Cell headCell = _tnCell[s.TrailId];
             if (headCell.Equals(_goal))
             {
-                return MakeResult(queue, sIdx);
+                if (RequiredFoodIndex < 0 || (s.FoodMask & (1 << RequiredFoodIndex)) != 0)
+                {
+                    return MakeResult(queue, sIdx);
+                }
+                // 到达终点但还没吃必需食物：游戏已结束，不再展开，继续搜索其它状态。
+                continue;
             }
 
             for (int di = 0; di < Directions.Length; di++)

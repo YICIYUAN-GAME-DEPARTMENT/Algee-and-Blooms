@@ -66,22 +66,6 @@ texture = ExtResource("8_q7hd7")
 [node name="TopArea" parent="LevelHUD/Root" parent_id_path=PackedInt32Array(1443197510, 162793811) index="0" unique_id=774789840]
 offset_bottom = 92.0
 
-[node name="HBoxContainer" parent="LevelHUD/Root/TopArea" index="0" unique_id=27681162]
-offset_top = 17.0
-offset_bottom = 97.0
-
-[node name="PetalLabel" parent="LevelHUD/Root/TopArea/HBoxContainer" index="3" unique_id=1633810610]
-visible = false
-
-[node name="PetalCard" parent="LevelHUD/Root/TopArea/HBoxContainer" index="4" unique_id=1005584411]
-visible = false
-
-[node name="GrowLabel" parent="LevelHUD/Root/TopArea/HBoxContainer" index="6" unique_id=1368424989]
-visible = false
-
-[node name="GrowCard" parent="LevelHUD/Root/TopArea/HBoxContainer" index="7" unique_id=1715908551]
-visible = false
-
 [node name="ActionsPanel" parent="LevelHUD/Root/TopArea" index="1" unique_id=1118754327]
 offset_top = 18.0
 offset_bottom = 76.0

@@ -96,6 +96,49 @@ internal sealed class MapElitesArchive
         return best;
     }
 
+    /// <summary>Top-K 候选（按 delta → quality → 容量 → 格键确定性排序），供设计公平门逐个复核。</summary>
+    public List<RankedCandidate> SelectRanked(int max)
+    {
+        var rows = new List<(Entry Entry, CellKey Key)>(_cells.Count);
+        foreach (KeyValuePair<CellKey, Entry> kv in _cells)
+        {
+            rows.Add((kv.Value, kv.Key));
+        }
+        rows.Sort((a, b) =>
+        {
+            int cmp = a.Entry.Delta.CompareTo(b.Entry.Delta);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+            cmp = b.Entry.Count.CompareTo(a.Entry.Count);
+            return cmp != 0 ? cmp : a.Key.CompareTo(b.Key);
+        });
+        int count = Math.Min(Math.Max(max, 0), rows.Count);
+        var result = new List<RankedCandidate>(count);
+        for (int i = 0; i < count; i++)
+        {
+            Entry entry = rows[i].Entry;
+            result.Add(new RankedCandidate(entry.Result, entry.Delta,
+                entry.Delta > TargetTolerance));
+        }
+        return result;
+    }
+
+    internal readonly struct RankedCandidate
+    {
+        public readonly GenerationResult Result;
+        public readonly int Delta;
+        public readonly bool Miss;
+
+        public RankedCandidate(GenerationResult result, int delta, bool miss)
+        {
+            Result = result;
+            Delta = delta;
+            Miss = miss;
+        }
+    }
+
     private CellKey KeyOf(GenerationResult result)
     {
         int size = Math.Max(result.Spec.Width, result.Spec.Height);

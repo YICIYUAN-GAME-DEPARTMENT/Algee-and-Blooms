@@ -120,6 +120,15 @@ func get_max_mech_level() -> int:
 	return int(_core.call("GetMaxMechLevel"))
 
 
+## 各机关当前阶段（按中心顺序；负值表示尚未激活）
+func get_mech_levels() -> Array[int]:
+	_ensure_core()
+	var levels: Array = _core.call("GetMechLevels")
+	var out: Array[int] = []
+	out.assign(levels)
+	return out
+
+
 func has_mechanisms() -> bool:
 	_ensure_core()
 	return bool(_core.call("HasMechanisms"))
