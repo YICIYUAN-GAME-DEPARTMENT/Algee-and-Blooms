@@ -46,8 +46,8 @@ color = Color(0.982, 1, 0.94, 0.09803922)
 layout_mode = 1
 anchors_preset = 9
 anchor_bottom = 1.0
-offset_right = 555.0
-offset_bottom = 186.1225
+offset_right = 832.5
+offset_bottom = 279.1838
 grow_vertical = 2
 mouse_filter = 2
 expand_mode = 1
@@ -59,41 +59,41 @@ anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 15.0
-offset_top = -285.0
-offset_right = -9.0
-offset_bottom = -37.0
+offset_left = 22.5
+offset_top = -427.5
+offset_right = -13.5
+offset_bottom = -55.5
 grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
 theme_type_variation = &"GardenPanel"
 
 [node name="Content" type="VBoxContainer" parent="Root/DialogueBox" unique_id=595666215]
-custom_minimum_size = Vector2(1200, 200)
+custom_minimum_size = Vector2(1800, 300)
 layout_mode = 2
 size_flags_horizontal = 4
 size_flags_vertical = 4
 mouse_filter = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 12
 
 [node name="Name" type="Label" parent="Root/DialogueBox/Content" unique_id=340030909]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.929, 0.561, 0.345, 1)
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 51
 vertical_alignment = 1
 
 [node name="Text" type="Label" parent="Root/DialogueBox/Content" unique_id=440234231]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_colors/font_color = Color(0.15294118, 0.30980393, 0.22352941, 1)
-theme_override_font_sizes/font_size = 25
+theme_override_font_sizes/font_size = 38
 autowrap_mode = 2
 
 [node name="ContinueHint" type="Label" parent="Root/DialogueBox/Content" unique_id=1706676535]
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.929, 0.561, 0.345, 1)
-theme_override_font_sizes/font_size = 22
+theme_override_font_sizes/font_size = 33
 text = "▼"
 horizontal_alignment = 2
 
@@ -104,10 +104,10 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -148.0
-offset_top = -363.0
-offset_right = -22.0
-offset_bottom = -307.0
+offset_left = -222
+offset_top = -544.5
+offset_right = -33
+offset_bottom = -460.5
 grow_horizontal = 0
 grow_vertical = 0
 focus_mode = 0

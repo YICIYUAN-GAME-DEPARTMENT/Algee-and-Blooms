@@ -313,29 +313,34 @@ static func _cell_from_array(raw: Variant) -> Vector2i:
 ## 随机关卡相机：按棋盘包围盒居中缩放（仅生成模式；手编关卡仍由作者摆放）。
 func _fit_camera_to_generated_board() -> void:
 	var cam := get_node_or_null("Cam") as Camera2D
-	if cam == null:
+	var world := get_node_or_null("World") as Node2D
+	if cam == null or world == null:
 		return
-	var board_px := Vector2(_board_size) * GridMetrics.CELL_PX
+	# 棋盘尺寸按 World 场景放大后的全局像素计算（手编关卡 World.scale = 1.5）
+	var world_scale := world.scale.x
+	var board_px := Vector2(_board_size) * GridMetrics.CELL_PX * world_scale
 	if board_px.x <= 0.0 or board_px.y <= 0.0:
 		return
-	var view := Vector2(1280, 720)
+	var view := Vector2(1920, 1080)
 	var vp := get_viewport()
 	if vp != null:
 		view = vp.get_visible_rect().size
 	var margin := 1.25
 	var fit := minf(1.0, minf(view.x / (board_px.x * margin), view.y / (board_px.y * margin)))
 	cam.zoom = Vector2(fit, fit)
-	cam.position = Vector2(_board_origin) * GridMetrics.CELL_PX + board_px * 0.5
+	var board_local := Vector2(_board_size) * GridMetrics.CELL_PX
+	var local_center := Vector2(_board_origin) * GridMetrics.CELL_PX + board_local * 0.5
+	cam.position = world.to_global(local_center)
 	cam.make_current()
 
 	# 背景跟随相机：按可见世界范围放大并居中，避免棋盘外围露出未覆盖区域。
 	var bg := get_node_or_null("World/Bg") as Sprite2D
 	if bg != null and bg.texture != null:
-		var visible_world := view / maxf(fit, 0.01)
-		var cover := Vector2(maxf(visible_world.x, board_px.x * margin),
-				maxf(visible_world.y, board_px.y * margin))
+		var visible_local := view / maxf(fit * world_scale, 0.01)
+		var cover := Vector2(maxf(visible_local.x, board_local.x * margin),
+				maxf(visible_local.y, board_local.y * margin))
 		bg.scale = Vector2(cover.x / bg.texture.get_width(), cover.y / bg.texture.get_height())
-		bg.position = cam.position
+		bg.position = world.to_local(cam.position)
 
 
 ## 自动地图范围 = Ground/Obstacles 涂格 + 实体格（Spawn/Goal/Food/Mechanism 核心）的外接矩形。

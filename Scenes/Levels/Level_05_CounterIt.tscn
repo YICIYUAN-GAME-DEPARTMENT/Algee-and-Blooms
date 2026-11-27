@@ -28,6 +28,7 @@ story_fail = "res://Resources/Dialogue/Story_Level05_Fail.json"
 
 [node name="World" type="Node2D" parent="." unique_id=2088720049]
 position = Vector2(400, 180)
+scale = Vector2(1.5, 1.5)
 
 [node name="Bg" type="Sprite2D" parent="World" unique_id=475347449]
 position = Vector2(240, 180)
@@ -101,5 +102,5 @@ texture = ExtResource("12_dghoh")
 [node name="LevelHUD" parent="." unique_id=1443197510 instance=ExtResource("13_64rup")]
 
 [node name="Cam" type="Camera2D" parent="." unique_id=962089457]
-position = Vector2(632, 286)
+position = Vector2(748, 339)
 zoom = Vector2(1.5, 1.5)

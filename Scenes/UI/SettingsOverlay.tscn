@@ -34,18 +34,18 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(800, 600)
+custom_minimum_size = Vector2(1200, 900)
 layout_mode = 2
 theme_type_variation = &"ResultPanel"
 
 [node name="Content" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="Title" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.169, 0.357, 0.243, 1)
-theme_override_font_sizes/font_size = 30
+theme_override_font_sizes/font_size = 45
 text = "设置"
 horizontal_alignment = 1
 
@@ -53,66 +53,66 @@ horizontal_alignment = 1
 layout_mode = 2
 
 [node name="Tabs" type="TabContainer" parent="Center/Panel/Content"]
-custom_minimum_size = Vector2(740, 400)
+custom_minimum_size = Vector2(1110, 600)
 layout_mode = 2
 size_flags_vertical = 3
 
 [node name="Video" type="VBoxContainer" parent="Center/Panel/Content/Tabs"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 24
 
 [node name="FullscreenRow" type="HBoxContainer" parent="Center/Panel/Content/Tabs/Video"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="FullscreenLabel" type="Label" parent="Center/Panel/Content/Tabs/Video/FullscreenRow"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "全屏"
 vertical_alignment = 1
 
 [node name="FullscreenToggle" type="CheckButton" parent="Center/Panel/Content/Tabs/Video/FullscreenRow"]
-custom_minimum_size = Vector2(160, 40)
+custom_minimum_size = Vector2(240, 60)
 layout_mode = 2
 text = "启用"
 
 [node name="VsyncRow" type="HBoxContainer" parent="Center/Panel/Content/Tabs/Video"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="VsyncLabel" type="Label" parent="Center/Panel/Content/Tabs/Video/VsyncRow"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "垂直同步"
 vertical_alignment = 1
 
 [node name="VsyncToggle" type="CheckButton" parent="Center/Panel/Content/Tabs/Video/VsyncRow"]
-custom_minimum_size = Vector2(160, 40)
+custom_minimum_size = Vector2(240, 60)
 layout_mode = 2
 text = "启用"
 
 [node name="VideoHint" type="Label" parent="Center/Panel/Content/Tabs/Video"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.4, 0.5019608, 0.41568628, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 27
 text = "修改后立即生效，并自动保存。"
 
 [node name="Audio" type="VBoxContainer" parent="Center/Panel/Content/Tabs"]
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 24
 
 [node name="MasterRow" type="HBoxContainer" parent="Center/Panel/Content/Tabs/Audio"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="MasterLabel" type="Label" parent="Center/Panel/Content/Tabs/Audio/MasterRow"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "主音量"
 vertical_alignment = 1
 
 [node name="MasterSlider" type="HSlider" parent="Center/Panel/Content/Tabs/Audio/MasterRow"]
-custom_minimum_size = Vector2(360, 24)
+custom_minimum_size = Vector2(540, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 max_value = 100.0
@@ -120,7 +120,7 @@ step = 1.0
 value = 80.0
 
 [node name="MasterValue" type="Label" parent="Center/Panel/Content/Tabs/Audio/MasterRow"]
-custom_minimum_size = Vector2(70, 0)
+custom_minimum_size = Vector2(105, 0)
 layout_mode = 2
 text = "80%"
 horizontal_alignment = 2
@@ -128,16 +128,16 @@ vertical_alignment = 1
 
 [node name="SfxRow" type="HBoxContainer" parent="Center/Panel/Content/Tabs/Audio"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="SfxLabel" type="Label" parent="Center/Panel/Content/Tabs/Audio/SfxRow"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "音效音量"
 vertical_alignment = 1
 
 [node name="SfxSlider" type="HSlider" parent="Center/Panel/Content/Tabs/Audio/SfxRow"]
-custom_minimum_size = Vector2(360, 24)
+custom_minimum_size = Vector2(540, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 max_value = 100.0
@@ -145,7 +145,7 @@ step = 1.0
 value = 80.0
 
 [node name="SfxValue" type="Label" parent="Center/Panel/Content/Tabs/Audio/SfxRow"]
-custom_minimum_size = Vector2(70, 0)
+custom_minimum_size = Vector2(105, 0)
 layout_mode = 2
 text = "80%"
 horizontal_alignment = 2
@@ -154,87 +154,87 @@ vertical_alignment = 1
 [node name="AudioHint" type="Label" parent="Center/Panel/Content/Tabs/Audio"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.4, 0.5019608, 0.41568628, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 27
 text = "主音量影响全部声音，音效音量只影响按钮与玩法音效。"
 
 [node name="Keys" type="VBoxContainer" parent="Center/Panel/Content/Tabs"]
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 18
 
 [node name="KeyGrid" type="GridContainer" parent="Center/Panel/Content/Tabs/Keys"]
 layout_mode = 2
-theme_override_constants/h_separation = 16
-theme_override_constants/v_separation = 10
+theme_override_constants/h_separation = 24
+theme_override_constants/v_separation = 15
 columns = 2
 
 [node name="MoveUpLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "上"
 vertical_alignment = 1
 
 [node name="KeyMoveUp" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "上"
 script = ExtResource("3_button")
 
 [node name="MoveDownLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "下"
 vertical_alignment = 1
 
 [node name="KeyMoveDown" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "下"
 script = ExtResource("3_button")
 
 [node name="MoveLeftLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "左"
 vertical_alignment = 1
 
 [node name="KeyMoveLeft" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "左"
 script = ExtResource("3_button")
 
 [node name="MoveRightLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "右"
 vertical_alignment = 1
 
 [node name="KeyMoveRight" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "右"
 script = ExtResource("3_button")
 
 [node name="RestartLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "重开本关"
 vertical_alignment = 1
 
 [node name="KeyRestart" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "R"
 script = ExtResource("3_button")
 
 [node name="PauseLabel" type="Label" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(160, 0)
+custom_minimum_size = Vector2(240, 0)
 layout_mode = 2
 text = "暂停"
 vertical_alignment = 1
 
 [node name="KeyPause" type="Button" parent="Center/Panel/Content/Tabs/Keys/KeyGrid"]
-custom_minimum_size = Vector2(220, 40)
+custom_minimum_size = Vector2(330, 60)
 layout_mode = 2
 text = "Esc"
 script = ExtResource("3_button")
@@ -242,18 +242,18 @@ script = ExtResource("3_button")
 [node name="KeyHint" type="Label" parent="Center/Panel/Content/Tabs/Keys"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.4, 0.5019608, 0.41568628, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 27
 text = "点击按键后按下新键；Esc 取消。"
 
 [node name="ResetKeys" type="Button" parent="Center/Panel/Content/Tabs/Keys"]
-custom_minimum_size = Vector2(220, 44)
+custom_minimum_size = Vector2(330, 66)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "恢复默认键位"
 script = ExtResource("3_button")
 
 [node name="Back" type="Button" parent="Center/Panel/Content"]
-custom_minimum_size = Vector2(200, 50)
+custom_minimum_size = Vector2(300, 75)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "返回"

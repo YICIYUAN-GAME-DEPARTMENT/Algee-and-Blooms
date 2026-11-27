@@ -29,7 +29,7 @@
 | 一句话玩法 | 尾部钉在起点、身体像管道铺到哪探到哪；每走 N 步花丛（机关）集体扩张堵路，赶在合拢前踩到蓝花（终点） |
 | 核心体验 | 扩张可达范围 ↔ 花丛随步数收紧；每一步都是路线规划与折返截断的取舍 |
 | 引擎 / 语言 | Godot **4.7 stable**（.NET/mono，导出与 CI）+ **GDScript**（表现层）/ **C#**（规则与算法，单一权威，项目内 `Scripts/Algorithms/`）；不支持 Web 导出 |
-| 画面 / 平台 | 1280×720，`canvas_items` 拉伸，Forward+（Windows 渲染设备 d3d12）；目标 Windows 桌面 |
+| 画面 / 平台 | 设计基准 1920×1080（窗口化启动 1280×720），`canvas_items` 拉伸，Forward+（Windows 渲染设备 d3d12）；目标 Windows 桌面 |
 | 架构 | 5 个 Autoload（GameManager / EventManager / SaveManager / ButtonAudio / SfxManager）+ `Level.gd`（表现）/ `LevelState.gd`（薄适配）/ `Scripts/Algorithms/`（C# 规则 + 搜索 + 生成，单一权威）/ `GridSystem`（场景网格数据）+ 实体预制 + 关卡场景直编 |
 | 测试 | 全部引擎内 headless：`tests/core/`（C# 断言场景）+ `tests/fixtures/`（黄金路线 / 锚点 / 基准快照） |
 | 项目阶段 | GameJam 已完成，进入正式上线准备；已确认 GDScript 表现层 + C# 规则单一权威并同步权威文档；里程碑见 [正式上线待办](docs/planning/正式上线待办.md)（**规划稿，非权威**） |

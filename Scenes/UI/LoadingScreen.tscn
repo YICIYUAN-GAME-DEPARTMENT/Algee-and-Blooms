@@ -5,42 +5,42 @@
 [ext_resource type="Script" uid="uid://dqob88e71yqmj" path="res://Scripts/UI/JuicyButton.gd" id="3_button"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBox_panel"]
-content_margin_left = 36.0
-content_margin_top = 28.0
-content_margin_right = 36.0
-content_margin_bottom = 28.0
+content_margin_left = 54
+content_margin_top = 42
+content_margin_right = 54
+content_margin_bottom = 42
 bg_color = Color(1, 0.976, 0.886, 0.98)
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color(0.314, 0.514, 0.365, 0.82)
+corner_radius_top_left = 39
+corner_radius_top_right = 39
+corner_radius_bottom_right = 39
+corner_radius_bottom_left = 39
+shadow_color = Color(0.18, 0.31, 0.22, 0.2)
+shadow_size = 14
+shadow_offset = Vector2(0, 9)
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_bar_bg"]
+bg_color = Color(0.87, 0.9, 0.8, 1)
 border_width_left = 3
 border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
-border_color = Color(0.314, 0.514, 0.365, 0.82)
-corner_radius_top_left = 26
-corner_radius_top_right = 26
-corner_radius_bottom_right = 26
-corner_radius_bottom_left = 26
-shadow_color = Color(0.18, 0.31, 0.22, 0.2)
-shadow_size = 9
-shadow_offset = Vector2(0, 6)
-
-[sub_resource type="StyleBoxFlat" id="StyleBox_bar_bg"]
-bg_color = Color(0.87, 0.9, 0.8, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
 border_color = Color(0.314, 0.514, 0.365, 0.55)
-corner_radius_top_left = 12
-corner_radius_top_right = 12
-corner_radius_bottom_right = 12
-corner_radius_bottom_left = 12
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
 
 [sub_resource type="StyleBoxFlat" id="StyleBox_bar_fill"]
 bg_color = Color(0.949, 0.62, 0.373, 1)
-corner_radius_top_left = 12
-corner_radius_top_right = 12
-corner_radius_bottom_right = 12
-corner_radius_bottom_left = 12
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
 
 [node name="LoadingScreen" type="Control"]
 layout_mode = 3
@@ -71,30 +71,30 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Panel" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(720, 0)
+custom_minimum_size = Vector2(1080, 0)
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBox_panel")
 
 [node name="Content" type="VBoxContainer" parent="Center/Panel"]
 layout_mode = 2
-theme_override_constants/separation = 14
+theme_override_constants/separation = 21
 
 [node name="Title" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.24, 0.42, 0.28, 1)
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 51
 text = "花海正在生长…"
 horizontal_alignment = 1
 
 [node name="Status" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.31, 0.45, 0.34, 1)
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/font_size = 30
 text = "正在生成花海…"
 horizontal_alignment = 1
 
 [node name="Progress" type="ProgressBar" parent="Center/Panel/Content"]
-custom_minimum_size = Vector2(620, 26)
+custom_minimum_size = Vector2(930, 39)
 layout_mode = 2
 size_flags_horizontal = 4
 show_percentage = false
@@ -104,91 +104,91 @@ theme_override_styles/fill = SubResource("StyleBox_bar_fill")
 [node name="Percent" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.42, 0.52, 0.42, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 27
 text = "0%"
 horizontal_alignment = 1
 
 [node name="MiniTitle" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.42, 0.52, 0.42, 1)
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 27
 text = "等花的时候：先采点花吧"
 horizontal_alignment = 1
 
 [node name="MiniGrid" type="GridContainer" parent="Center/Panel/Content"]
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_constants/h_separation = 10
-theme_override_constants/v_separation = 10
+theme_override_constants/h_separation = 15
+theme_override_constants/v_separation = 15
 columns = 3
 
 [node name="Petal0" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal1" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal2" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal3" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal4" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal5" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal6" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal7" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="Petal8" type="Button" parent="Center/Panel/Content/MiniGrid"]
-custom_minimum_size = Vector2(64, 64)
+custom_minimum_size = Vector2(96, 96)
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 26
+theme_override_font_sizes/font_size = 39
 text = "·"
 
 [node name="MiniScore" type="Label" parent="Center/Panel/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.49, 0.56, 0.47, 1)
-theme_override_font_sizes/font_size = 17
+theme_override_font_sizes/font_size = 26
 text = "顺手点花：0 朵"
 horizontal_alignment = 1
 
@@ -197,7 +197,7 @@ layout_mode = 2
 alignment = 1
 
 [node name="BackButton" type="Button" parent="Center/Panel/Content/Buttons"]
-custom_minimum_size = Vector2(200, 52)
+custom_minimum_size = Vector2(300, 78)
 layout_mode = 2
 text = "返回主菜单"
 script = ExtResource("3_button")
