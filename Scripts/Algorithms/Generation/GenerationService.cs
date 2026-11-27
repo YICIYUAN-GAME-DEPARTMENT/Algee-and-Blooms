@@ -23,8 +23,8 @@ namespace Growth.Algorithms.Generation;
 /// </summary>
 public partial class GenerationService : RefCounted
 {
-    // v12：结构注入（假岔路）+ 设计公平门 + Portfolio 调度；缓存需重新生成。
-    public const int GeneratorVersion = 12;
+    // v15：收敛每次尝试的 S/E 求解次数并提前退出（性能修正）；缓存需重新生成。
+    public const int GeneratorVersion = 15;
     private const string DefaultCacheDir = "user://generated";
 
     private GenerationCache _cache;
@@ -307,6 +307,8 @@ public partial class GenerationService : RefCounted
             ["done"] = _done,
             ["from_cache"] = _fromCache,
             ["attempts"] = _job?.Attempts ?? 0,
+            ["candidates_used"] = _job?.CandidatesUsed ?? 0,
+            ["adaptive_stop"] = _job?.AdaptiveStopped ?? false,
             ["work_units"] = _job?.WorkUnits ?? 0.0,
             ["target_steps"] = _job?.TargetSteps ?? 0,
             ["budget_aborted"] = _job?.BudgetAborted ?? false,
@@ -337,6 +339,8 @@ public partial class GenerationService : RefCounted
             ["percent"] = Math.Clamp(percent, 0.0, 1.0),
             ["phase"] = phase,
             ["attempts"] = _job?.Attempts ?? 0,
+            ["candidates_used"] = _job?.CandidatesUsed ?? 0,
+            ["adaptive_stop"] = _job?.AdaptiveStopped ?? false,
             ["work_units"] = _job?.WorkUnits ?? 0.0,
             ["target_steps"] = _job?.TargetSteps ?? 0,
             ["budget_aborted"] = _job?.BudgetAborted ?? false,

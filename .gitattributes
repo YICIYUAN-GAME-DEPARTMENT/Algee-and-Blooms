@@ -46,3 +46,6 @@
 
 # Binary bundles
 *.zip   filter=lfs diff=lfs merge=lfs -text
+
+# Web demo (self-contained static site): keep copied assets as normal files
+webapp/assets/** -filter -text

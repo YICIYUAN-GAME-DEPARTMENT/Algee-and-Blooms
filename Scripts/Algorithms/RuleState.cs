@@ -48,6 +48,18 @@ public partial class RuleState : RefCounted
     /// <summary>生成校验时跳过 head→E 连通性 BFS（路线剩余段本身就是通路），只保留身长达上限的检查。</summary>
     internal bool SuppressPathCheck;
 
+    /// <summary>
+    /// 死局后是否终结本局。true（默认：求解 / 生成 / 测试口径）= 判负后拒绝后续移动；
+    /// false（仅表现层使用）= 判负只上报 DeadlockMsg，仍允许继续移动。
+    /// </summary>
+    private bool _endOnDeadlock = true;
+
+    /// <summary>表现层关闭「死局即终结」；死局判定与上报不变，只影响是否锁死后续移动。</summary>
+    public void SetEndOnDeadlock(bool enabled)
+    {
+        _endOnDeadlock = enabled;
+    }
+
     // ── 供同程序集内的求解器读取静态数据 ─────────────────────────
     internal GridModel Grid => _grid;
     internal Cell Spawn => _spawn;
@@ -296,7 +308,7 @@ public partial class RuleState : RefCounted
             else if (!SuppressDeadlockChecks)
             {
                 outcome.DeadlockMsg = CheckDeadlock();
-                if (outcome.DeadlockMsg.Length > 0)
+                if (outcome.DeadlockMsg.Length > 0 && _endOnDeadlock)
                 {
                     _finished = true;
                 }

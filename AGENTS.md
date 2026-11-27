@@ -147,6 +147,7 @@
 | [docs/development/关卡制作指南.md](docs/development/关卡制作指南.md) | 设计者：新建 / 摆放 / 校验关卡 |
 | [docs/planning/正式上线待办.md](docs/planning/正式上线待办.md) | 正式上线路线、算法核心与 P0/P1/P2 待办（**规划稿，非权威**） |
 | [docs/planning/随机关卡算法v4-整体改造方案.md](docs/planning/随机关卡算法v4-整体改造方案.md) | 随机关卡生成 / 评分 / 验证整体改造：双引擎（结构图 + 噪波负型）、设计公平门、节点抽象、纯路线高难（**规划稿，非权威**） |
+| [docs/planning/随机关卡算法v5-DMC开发方案.md](docs/planning/随机关卡算法v5-DMC开发方案.md) | DMC（动态迷宫编译器）：动态母题、参数域解耦、时间表合成、证明携带、band-first 评分与集成方案（**规划稿，非权威**） |
 | [docs/planning/过时/](docs/planning/过时/) | v3 生成 / 评分 / 自由模式 / 开发索引 / 评分训练集 / 状态机等历史规划稿（**已过时**） |
 | [docs/agents/rules/coding-rules.md](docs/agents/rules/coding-rules.md) | 编码规范（GDScript / 信号 / 网格判定 / 禁止项） |
 | [docs/agents/rules/collaboration-rules.md](docs/agents/rules/collaboration-rules.md) | 分支 / 提交 / PR / LFS / `.tscn` 冲突 |
@@ -169,6 +170,7 @@
 | 工具 | `tools/` | headless 生成 / 迁移 / 校验 / 求解器（`LevelSolver`），不参与游戏运行 |
 | 算法与规则 | `Scripts/Algorithms/`（C#） | 规则唯一实现 / 网格模型 / 搜索 / 生成 / 评分；不访问节点 / 场景 / 信号 |
 | 测试 | `tests/` | 引擎内 headless：`tests/core/` C# 断言场景 + `tests/fixtures/` 快照；未引入 GUT 等外部框架 |
+| Web 演示 | `webapp/` | 第 6 关独立 HTML5 复刻 Demo（分享试玩；规则为 C# 镜像，非权威）；数据由 `webapp/tools/export_level.mjs` 从场景导出；Godot 经 `.gdignore` 跳过；素材副本不走 LFS |
 | 美术 / 音频 | `Art/` / `Audio/` / `UI/` | 正式资源 + 占位；登记见开发文档 §3.9 |
 
 ---
@@ -262,3 +264,4 @@
 | 2026-11-24 | 架构再定稿：规则单一权威迁入 C#（项目内 `Scripts/Algorithms/`），`LevelState.gd` 退化为适配层；取消独立 `.Core`/`.Cli` 与 xUnit，测试全部改为引擎内 headless（C# 断言场景 + GUT） | 架构组 |
 | 2026-11-25 | 文档同步现状：仓库未引入 GUT（无 `addons/gut/`），测试统一为 `tests/core/` C# 断言场景 + `tests/fixtures/`；修正 §4.4 规则层表述（`LevelState.gd` 为适配层，规则在 C#）；生成器样本关移至 `WIP/` | 架构组 |
 | 2026-11-26 | 新增随机关卡算法 v4 整体改造方案；v3 生成 / 评分 / 自由模式 / 训练集 / 状态机等规划稿移入 `docs/planning/过时/`；同步规划稿索引 | 架构组 |
+| 2026-11-27 | 新增随机关卡算法 v5 DMC 开发方案（动态母题 / 参数域解耦 / 时间表合成 / 证明携带评分）；同步 §4.3 规划稿索引 | 架构组 |

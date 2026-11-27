@@ -10,6 +10,7 @@
 /ios/
 /web-builds/
 /builds/
+webapp/dist/
 
 # ── Export presets (machine-local, may contain keys) ─────────
 export_presets.cfg

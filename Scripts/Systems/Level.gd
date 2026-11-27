@@ -44,17 +44,19 @@ extends Node2D
 var state: LevelState = LevelState.new()
 var input_locked := false
 var finished := false
+## 已判负：只提示横幅，不冻结输入/流程（判负后规则层本身拒绝移动）
+var _failed := false
 ## 开场剧情播放中：锁方向键输入（R 重开始终可用）
 var _story_active := false
 
 var grid := GridSystem.new()
 var _board_origin := Vector2i.ZERO
 var _board_size := Vector2i.ZERO
-## 本关花丛最高阶段（cap），供 HUD 展示
-var _mech_cap := 0
 
 var _mechanisms: Array = []
 var _foods: Array = []
+## 关卡开局食物格（快照用；_foods 会被吃食物移除，不能当初始数据）
+var _initial_food_cells: Array[Vector2i] = []
 var _goal: Goal = null
 var _spawn: PlayerSpawn = null
 ## 剧情覆盖层（运行时懒实例化的 DialogueOverlay）
@@ -506,11 +508,13 @@ func _place_player() -> void:
 	grid.goal_cell = _goal.cell
 	_spawn.visible = false  # 出生点标识由玩家身体覆盖
 	finished = false
+	_failed = false
 	input_locked = false
 
 	var foods: Array[Vector2i] = []
 	for f in _foods:
 		foods.append(f.cell)
+	_initial_food_cells = foods.duplicate()
 	var centers: Array[Vector2i] = []
 	var initial_levels: Array[int] = []
 	for m in _mechanisms:
@@ -518,7 +522,6 @@ func _place_player() -> void:
 		initial_levels.append(m.initial_level)
 
 	var cap := _resolve(mechanism_max_level_override, GameManager.balance.mechanism_max_level)
-	_mech_cap = cap
 	var l0 := _resolve(initial_max_len_override, GameManager.balance.initial_max_len)
 	var interval := _resolve(growth_step_interval_override, GameManager.balance.growth_step_interval)
 	var gain := _resolve(food_len_gain_override, GameManager.balance.food_len_gain)
@@ -771,12 +774,12 @@ func _growth_sequence(res: LevelState.StepResult) -> void:
 	await get_tree().create_timer(dur).timeout
 	input_locked = false
 	EventManager.input_locked.emit(false)
-	if not finished and not res.deadlock_msg.is_empty():
+	if not finished and not _failed and not res.deadlock_msg.is_empty():
 		_fail(res.deadlock_msg)
 
 
 func _win() -> void:
-	if finished:
+	if finished or _failed:
 		return
 	finished = true
 	if not generated_active:
@@ -791,18 +794,18 @@ func _win() -> void:
 		_hud.show_result("胜利！ 步数 %d" % steps, true)
 
 
-func _fail(msg: String = "无路可走… 重开吧") -> void:
-	if finished:
+## 判负：只显示底部横幅，不冻结输入/流程（_msg 仅作诊断保留）
+func _fail(_msg: String = "无路可走… 重开吧") -> void:
+	if finished or _failed:
 		return
-	finished = true
+	_failed = true
 	EventManager.level_failed.emit(level_id)
-	# 失败剧情：先播完（含跳过）再弹失败面板；await 期间 R 重开则不再显示
+	# 失败剧情：先播完（含跳过）再提示；await 期间 R 重开则不再显示
 	if not story_fail.is_empty():
 		await _play_story(story_fail)
 	if is_instance_valid(_hud) and _hud.is_inside_tree():
 		_hide_hint()
-		_hud.set_hint_available(false)
-		_hud.show_result(msg)
+		_hud.show_fail_banner()
 
 
 ## 播剧情统一入口：实例覆盖层 → 抑制 HUD 暂停 → 播放 → 等 finished（跳过同样结束）
@@ -976,8 +979,8 @@ func build_spec_snapshot() -> Dictionary:
 		var c: Vector2i = raw
 		obstacle_cells.append([c.x, c.y])
 	var foods: Array = []
-	for f in _foods:
-		foods.append([f.cell.x, f.cell.y])
+	for c: Vector2i in _initial_food_cells:
+		foods.append([c.x, c.y])
 	var centers: Array = []
 	var levels: Array = []
 	for m in _mechanisms:
@@ -1014,9 +1017,7 @@ func build_spec_snapshot() -> Dictionary:
 
 
 func _update_hud() -> void:
-	_hud.update_remaining_steps(state.get_remaining_steps())
 	_hud.set_length(state.trail.size(), state.max_len)
 	_hud.set_growth_countdown(state.get_growth_countdown())
-	_hud.set_mech_status(state.get_max_mech_level(), _mech_cap)
 	_hud.set_petal_gain(state.food_len_gain)
 	_hud.set_petal_visible(not _foods.is_empty())

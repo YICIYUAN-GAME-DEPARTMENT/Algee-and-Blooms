@@ -34,6 +34,11 @@ public sealed class GeneratorConfig
     public int LevelIndex { get; set; }
     /// <summary>是否对最终 Top-K 候选执行设计公平门（G3）。</summary>
     public bool EnableFairnessGate { get; set; } = true;
+    /// <summary>
+    /// 自适应预算：已进目标带且连续若干候选没有刷新最高质量时提前停止，
+    /// 避免 easy/normal 为边际提升跑满全部候选；上限仍由 Candidates 决定。
+    /// </summary>
+    public bool AdaptiveBudget { get; set; } = true;
 }
 
 /// <summary>生成结果（成功时携带完整 LevelSpec、规范路线与评分）。</summary>
@@ -312,40 +317,58 @@ public partial class RouteFirstGenerator : RefCounted
         Cell spawn = Cell.Zero;
         Dictionary<Cell, int> distMap = null;
         var goalPool = new List<Cell>();
-        List<Cell> spawnOrder = PeripheralSpawns(walkable, rng);
-        int spawnTries = Math.Min(spawnOrder.Count, 8);
-        for (int i = 0; i < spawnTries; i++)
+        var walkableSet = new HashSet<Cell>(walkable);
+        WalkBounds bounds = BoundsOf(walkable);
+        List<Cell> spawnOrder = SpawnOrder(walkable, rng, cfg.Difficulty);
+        bool wideSearch = cfg.Difficulty is "hard" or "expert";
+        int preferredTries = Math.Min(spawnOrder.Count, wideSearch ? 12 : 8);
+
+        bool SelectPool(int minDist, int from, int count)
         {
-            Cell trySpawn = spawnOrder[i];
-            Dictionary<Cell, int> dm = grid.BfsDistMap(trySpawn, empty);
-            var pool = new List<Cell>();
-            foreach (KeyValuePair<Cell, int> kv in dm)
+            for (int i = from; i < count; i++)
             {
-                if (kv.Value >= bandMinSteps && kv.Value <= bandMaxSteps)
+                Cell trySpawn = spawnOrder[i];
+                Dictionary<Cell, int> dm = grid.BfsDistMap(trySpawn, empty);
+                var pool = new List<Cell>();
+                foreach (KeyValuePair<Cell, int> kv in dm)
                 {
-                    pool.Add(kv.Key);
+                    if (kv.Value >= minDist && kv.Value <= bandMaxSteps)
+                    {
+                        pool.Add(kv.Key);
+                    }
                 }
+                if (pool.Count == 0)
+                {
+                    continue;
+                }
+                spawn = trySpawn;
+                distMap = dm;
+                goalPool = pool;
+                return true;
             }
-            if (pool.Count == 0)
-            {
-                continue;
-            }
-            spawn = trySpawn;
-            distMap = dm;
-            goalPool = pool;
-            break;
+            return false;
         }
-        if (goalPool.Count == 0)
+
+        // 先按偏好顺序找；hard/expert 找不到时再在有限候选内穷尽，并逐步放宽目标带下限，
+        // 由 TryBuild 的封路核心补足真实绕行（最终仍校验 band.MinSteps）。
+        // easy/normal 保持旧成本：只试偏好候选，避免拖慢常见档位的失败尝试。
+        bool found = SelectPool(bandMinSteps, 0, preferredTries);
+        if (!found && wideSearch)
+        {
+            const int ExtraSpawnTries = 24;
+            int extraEnd = Math.Min(spawnOrder.Count, preferredTries + ExtraSpawnTries);
+            found = SelectPool(bandMinSteps, preferredTries, extraEnd);
+            for (int relax = 2; relax <= 4 && !found; relax += 2)
+            {
+                found = SelectPool(Math.Max(2, bandMinSteps - relax), 0, extraEnd);
+            }
+        }
+        if (!found || goalPool.Count == 0)
         {
             reason = "地形缺少足够远的终点";
             return null;
         }
-        goalPool.Sort((a, b) =>
-        {
-            int da = Math.Abs(distMap[a] - targetSteps);
-            int db = Math.Abs(distMap[b] - targetSteps);
-            return da != db ? da.CompareTo(db) : a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
-        });
+        SortGoalPool(goalPool, distMap, targetSteps, walkableSet, cfg.Difficulty, bounds);
         Cell goal = goalPool[rng.NextInt(Math.Min(goalPool.Count, 16))];
 
         return new BaseLayout
@@ -692,6 +715,212 @@ public partial class RouteFirstGenerator : RefCounted
         var head = ordered.GetRange(0, pool);
         rng.Shuffle(head);
         return head;
+    }
+
+    /// <summary>可走区外接框（端点边距用）。</summary>
+    internal readonly struct WalkBounds
+    {
+        public readonly int MinX;
+        public readonly int MinY;
+        public readonly int MaxX;
+        public readonly int MaxY;
+
+        public WalkBounds(int minX, int minY, int maxX, int maxY)
+        {
+            MinX = minX;
+            MinY = minY;
+            MaxX = maxX;
+            MaxY = maxY;
+        }
+    }
+
+    internal static WalkBounds BoundsOf(IReadOnlyList<Cell> cells)
+    {
+        if (cells.Count == 0)
+        {
+            return new WalkBounds(0, 0, 0, 0);
+        }
+        int minX = cells[0].X;
+        int minY = cells[0].Y;
+        int maxX = minX;
+        int maxY = minY;
+        foreach (Cell c in cells)
+        {
+            minX = Math.Min(minX, c.X);
+            minY = Math.Min(minY, c.Y);
+            maxX = Math.Max(maxX, c.X);
+            maxY = Math.Max(maxY, c.Y);
+        }
+        return new WalkBounds(minX, minY, maxX, maxY);
+    }
+
+    /// <summary>到可走区外接框四边的最小距离（0 = 贴边）。</summary>
+    internal static int BorderMargin(Cell c, WalkBounds bounds)
+    {
+        return Math.Min(
+            Math.Min(c.X - bounds.MinX, bounds.MaxX - c.X),
+            Math.Min(c.Y - bounds.MinY, bounds.MaxY - c.Y));
+    }
+
+    internal static int WalkableDegree(Cell c, HashSet<Cell> walkable)
+    {
+        int degree = 0;
+        foreach (Cell n in GridModel.Neighbors(c))
+        {
+            if (walkable.Contains(n))
+            {
+                degree++;
+            }
+        }
+        return degree;
+    }
+
+    /// <summary>
+    /// 出生点候选顺序：easy 保持外围优先；normal/hard/expert 交替“内部多路格 / 外围格”，
+    /// 让关卡也能从中央区域起步（内部格更容易形成多方向进入、避免单路解）。
+    /// </summary>
+    internal static List<Cell> SpawnOrder(IReadOnlyList<Cell> walkable, DeterministicRng rng, string tier)
+    {
+        List<Cell> peripheral = PeripheralSpawns(walkable, rng);
+        if (tier != "normal" && tier != "hard" && tier != "expert")
+        {
+            return peripheral;
+        }
+        var set = new HashSet<Cell>(walkable);
+        WalkBounds bounds = BoundsOf(walkable);
+        int minMargin = tier == "expert" ? 3 : 2;
+        List<Cell> interior = CollectInterior(walkable, set, bounds, minMargin);
+        if (interior.Count < 4 && minMargin > 2)
+        {
+            interior = CollectInterior(walkable, set, bounds, 2);
+        }
+        if (interior.Count == 0)
+        {
+            return peripheral;
+        }
+        // 不消耗 rng：按边距“低—高—次低—次高”交替，既先试最容易满足步数带的内部格，
+        // 也覆盖更靠中央的格；同时保持与旧版一致的随机流，避免整批 seed 的尝试序列漂移。
+        interior.Sort((a, b) =>
+        {
+            int ma = BorderMargin(a, bounds);
+            int mb = BorderMargin(b, bounds);
+            if (ma != mb)
+            {
+                return ma.CompareTo(mb);
+            }
+            return a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
+        });
+        var orderedInterior = new List<Cell>(interior.Count);
+        int lo = 0;
+        int hi = interior.Count - 1;
+        while (lo <= hi)
+        {
+            orderedInterior.Add(interior[lo++]);
+            if (lo <= hi)
+            {
+                orderedInterior.Add(interior[hi--]);
+            }
+        }
+        interior = orderedInterior;
+        var used = new HashSet<Cell>();
+        var result = new List<Cell>(walkable.Count);
+        int pi = 0;
+        int ii = 0;
+        bool takeInterior = true;
+        while (ii < interior.Count || pi < peripheral.Count)
+        {
+            if (takeInterior && ii < interior.Count)
+            {
+                Cell c = interior[ii++];
+                if (used.Add(c))
+                {
+                    result.Add(c);
+                }
+            }
+            else if (pi < peripheral.Count)
+            {
+                Cell c = peripheral[pi++];
+                if (used.Add(c))
+                {
+                    result.Add(c);
+                }
+            }
+            else if (ii < interior.Count)
+            {
+                Cell c = interior[ii++];
+                if (used.Add(c))
+                {
+                    result.Add(c);
+                }
+            }
+            takeInterior = !takeInterior;
+        }
+        // 末尾补全所有剩余格：极端地形下 BuildBase 需要穷尽候选才能找到可行步数带。
+        foreach (Cell c in walkable)
+        {
+            if (used.Add(c))
+            {
+                result.Add(c);
+            }
+        }
+        return result;
+    }
+
+    private static List<Cell> CollectInterior(IReadOnlyList<Cell> walkable, HashSet<Cell> set,
+        WalkBounds bounds, int minMargin)
+    {
+        var interior = new List<Cell>();
+        foreach (Cell c in walkable)
+        {
+            if (BorderMargin(c, bounds) >= minMargin && WalkableDegree(c, set) >= 2)
+            {
+                interior.Add(c);
+            }
+        }
+        return interior;
+    }
+
+    /// <summary>
+    /// 终点池排序：先看与目标步数的差；normal/hard/expert 在差 ≤ 2 步时优先
+    /// “外接框边距 ≥ 2 且度数 ≥ 2”的格，避免终点落在单入口死角。
+    /// </summary>
+    internal static void SortGoalPool(List<Cell> pool, Dictionary<Cell, int> dist, int targetSteps,
+        HashSet<Cell> walkable, string tier, WalkBounds bounds)
+    {
+        bool preferInterior = tier == "normal" || tier == "hard" || tier == "expert";
+        int InteriorRank(Cell c)
+        {
+            if (!preferInterior)
+            {
+                return 0;
+            }
+            int margin = BorderMargin(c, bounds);
+            int degree = WalkableDegree(c, walkable);
+            return (degree >= 2 ? 0 : 10) + (margin >= 2 ? 0 : 4) + Math.Max(0, 2 - margin);
+        }
+
+        pool.Sort((a, b) =>
+        {
+            int deltaA = Math.Abs(dist[a] - targetSteps);
+            int deltaB = Math.Abs(dist[b] - targetSteps);
+            int rankA = InteriorRank(a);
+            int rankB = InteriorRank(b);
+            bool interiorA = rankA == 0;
+            bool interiorB = rankB == 0;
+            if (interiorA != interiorB && Math.Abs(deltaA - deltaB) <= 2)
+            {
+                return interiorA ? -1 : 1;
+            }
+            if (deltaA != deltaB)
+            {
+                return deltaA.CompareTo(deltaB);
+            }
+            if (rankA != rankB)
+            {
+                return rankA.CompareTo(rankB);
+            }
+            return a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
+        });
     }
 
     /// <summary>BFS 最短路（含起点与终点）；不可达返回 null。</summary>
@@ -1093,10 +1322,31 @@ public partial class RouteFirstGenerator : RefCounted
                 pool.Add(c);
             }
         }
-        rng.Shuffle(pool);
-        for (int i = 0; i < pool.Count && i < count; i++)
+        // 诱饵优先靠终点侧：按 dist(S,·) 分三段，后段优先，
+        // 避免诱饵全挤在起点附近（起点附近诱饵几乎不产生决策压力）。
+        var buckets = new List<Cell>[3];
+        for (int b = 0; b < buckets.Length; b++)
         {
-            spec.Foods.Add(pool[i]);
+            buckets[b] = new List<Cell>();
+        }
+        foreach (Cell c in pool)
+        {
+            int bucket = Math.Min(2, distS[c] * 3 / Math.Max(1, steps));
+            buckets[bucket].Add(c);
+        }
+        int added = 0;
+        for (int b = buckets.Length - 1; b >= 0 && added < count; b--)
+        {
+            rng.Shuffle(buckets[b]);
+            foreach (Cell c in buckets[b])
+            {
+                if (added >= count)
+                {
+                    break;
+                }
+                spec.Foods.Add(c);
+                added++;
+            }
         }
     }
 
@@ -1127,6 +1377,7 @@ public partial class RouteFirstGenerator : RefCounted
         };
 
         var candidates = new List<ForkCandidate>();
+        var earlyCandidates = new List<ForkCandidate>();
         for (int i = 1; i < routeCells.Count - 1; i++)
         {
             Cell attach = routeCells[i];
@@ -1134,6 +1385,8 @@ public partial class RouteFirstGenerator : RefCounted
             {
                 continue;
             }
+            // 前 1/4 路线只作兜底：诱饵全挤在起点附近时玩家几乎没有决策压力。
+            bool early = i * 4 < routeCells.Count;
             for (int di = 0; di < dirs.Length; di++)
             {
                 Cell dir = dirs[di];
@@ -1159,14 +1412,22 @@ public partial class RouteFirstGenerator : RefCounted
                 {
                     continue;
                 }
-                int score = 8;
+                // 诱饵岔路优先落在路线中后段（相位 1/2 加分），避免全部贴起点；
+                // 朝向终点的一侧额外加分，看起来更像“捷径”。
+                int phase = i * 3 / routeCells.Count;
+                int score = 8 + phase * 2;
                 int dot = (spec.Goal.X - attach.X) * dir.X + (spec.Goal.Y - attach.Y) * dir.Y;
                 if (dot > 0)
                 {
                     score += 3;
                 }
-                candidates.Add(new ForkCandidate(attach, c1, deepest, 2, deepest, score));
+                var candidate = new ForkCandidate(attach, c1, deepest, 2, deepest, score);
+                (early ? earlyCandidates : candidates).Add(candidate);
             }
+        }
+        if (candidates.Count == 0)
+        {
+            candidates = earlyCandidates;
         }
         candidates.Sort((a, b) =>
         {

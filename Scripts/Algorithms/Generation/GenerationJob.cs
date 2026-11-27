@@ -35,6 +35,9 @@ public sealed class GenerationJob
     private int _fallbackDelta = int.MaxValue;
     private bool _fallbackMiss = true;
     private int _fallbackCount;
+    private int _bestSelectedQuality = int.MinValue;
+    private int _staleCandidates;
+    private bool _stoppedEarly;
 
     public GenerationJob(GeneratorConfig cfg, GenerationBudget budget)
     {
@@ -69,6 +72,8 @@ public sealed class GenerationJob
     public int Attempts => _totalAttempts;
     public double WorkUnits => _units;
     public int TargetSteps => _targetSteps;
+    public bool AdaptiveStopped => _stoppedEarly;
+    public int CandidatesUsed => _cand;
     public GenerationResult Result => _result;
     public System.Collections.Generic.IReadOnlyDictionary<string, int> ReasonCounts => _reasonCounts;
     /// <summary>当前正在进行的阶段（由生成器上报，供加载屏显示）。</summary>
@@ -251,7 +256,45 @@ public sealed class GenerationJob
         if (_cand >= _candidates)
         {
             Finish(false);
+            return;
         }
+        if (TryAdaptiveStop())
+        {
+            _stoppedEarly = true;
+            Finish(false);
+        }
+    }
+
+    /// <summary>
+    /// 自适应预算：候选数达到档位下限、且连续若干候选没有刷新“当前最优候选”的质量，
+    /// 同时当前最优已进入目标步数带时，提前结束本轮生成。
+    /// 质量持续提升时不会触发，因此 hard/expert 仍可跑满高预算。
+    /// </summary>
+    private bool TryAdaptiveStop()
+    {
+        if (!_cfg.AdaptiveBudget || _archive.Count == 0)
+        {
+            return false;
+        }
+        (int floor, int staleLimit) = _cfg.Difficulty switch
+        {
+            "hard" => (3, 1),
+            "expert" => (4, 1),
+            _ => (2, 1),
+        };
+        // 以“目标带优先”的存档选择结果衡量质量趋势，避免被偏离目标的高分候选误导。
+        GenerationResult best = _archive.Select(out _, out bool miss);
+        int quality = best?.Score?.Quality ?? 0;
+        if (quality > _bestSelectedQuality)
+        {
+            _bestSelectedQuality = quality;
+            _staleCandidates = 0;
+        }
+        else
+        {
+            _staleCandidates++;
+        }
+        return _cand >= floor && !miss && _staleCandidates >= staleLimit;
     }
 
     private void CheckBreakers()
@@ -368,6 +411,14 @@ public sealed class GenerationJob
         best.Score.TargetSteps = _targetSteps;
         best.Score.TargetMiss = miss;
         best.Spec.BudgetUnits = (int)Math.Round(_units, MidpointRounding.AwayFromZero);
+        if (best.Metrics != null)
+        {
+            best.Metrics["candidates_used"] = _cand;
+            if (_stoppedEarly)
+            {
+                best.Metrics["adaptive_stop"] = 1.0;
+            }
+        }
         if (usedFallback)
         {
             best.Metrics["fallback_selected"] = 1.0;

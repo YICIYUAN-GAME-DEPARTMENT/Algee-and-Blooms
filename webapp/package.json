@@ -1,0 +1,12 @@
+{
+  "name": "algee-blooms-level06-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "export": "node tools/export_level.mjs",
+    "check": "node tools/export_level.mjs --check",
+    "test": "node tools/replay_test.mjs",
+    "serve": "python -m http.server 8080"
+  }
+}

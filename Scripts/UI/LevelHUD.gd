@@ -7,14 +7,13 @@ extends CanvasLayer
 signal hint_toggled
 signal rating_submitted(score: int, confidence: String, notes: String)
 
-@onready var _remaining_steps_value: Label = $Root/TopArea/StatsPanel/StatsRow/RemainingBlock/RemainingValue
 @onready var _length_value: Label = $Root/TopArea/StatsPanel/StatsRow/LengthBlock/LengthValue
 @onready var _petal_value: Label = $Root/TopArea/StatsPanel/StatsRow/PetalBlock/PetalValue
 @onready var _petal_block: VBoxContainer = $Root/TopArea/StatsPanel/StatsRow/PetalBlock
 @onready var _grow_block: VBoxContainer = $Root/TopArea/StatsPanel/StatsRow/GrowBlock
 @onready var _grow_value: Label = $Root/TopArea/StatsPanel/StatsRow/GrowBlock/GrowValue
-@onready var _mech_block: VBoxContainer = $Root/TopArea/StatsPanel/StatsRow/MechBlock
-@onready var _mech_value: Label = $Root/TopArea/StatsPanel/StatsRow/MechBlock/MechValue
+@onready var _fail_banner: MarginContainer = $Root/FailBanner
+@onready var _fail_banner_label: Label = $Root/FailBanner/BannerRow/BannerText
 @onready var _level_title: Label = $Root/TopArea/LevelTitle
 @onready var _overlay: Control = $Root/Overlay
 @onready var _overlay_text: Label = $Root/Overlay/Center/Panel/Content/Text
@@ -132,10 +131,6 @@ func is_modal_open() -> bool:
 	return _overlay.visible or _pause_overlay.visible or _settings.visible
 
 
-func update_remaining_steps(remaining_steps: int) -> void:
-	_remaining_steps_value.text = str(remaining_steps)
-
-
 ## 花瓣提供的步长：每片食物给最大身长增加的格数（Level 解析 override/全局后传入）
 func set_petal_gain(gain: int) -> void:
 	_petal_value.text = str(gain)
@@ -151,20 +146,14 @@ func set_length(current: int, maximum: int) -> void:
 	_length_value.text = "%d/%d" % [current, maximum]
 
 
-## 花丛当前最高阶段 / 最高上限（负阶段按 0 显示）
-func set_mech_status(current_level: int, cap: int) -> void:
-	_mech_value.text = "%d/%d" % [maxi(current_level, 0), cap]
-
-
 ## 花丛（机关）距下次生长的剩余有效步数；每步后由 Level 传入
 func set_growth_countdown(steps_left: int) -> void:
 	_grow_value.text = str(steps_left)
 
 
-## 本关无机关时隐藏生长倒计时与花丛成长
+## 本关无机关时隐藏生长倒计时
 func set_growth_visible(visible_now: bool) -> void:
 	_grow_block.visible = visible_now
-	_mech_block.visible = visible_now
 
 
 ## 顶栏关卡标题：第 N 关 · 关卡名（N = 场景 Level 根节点 level_id）
@@ -226,6 +215,7 @@ func _copy_generated_seed() -> void:
 ## 若是最后一关，"下一关"同样可用——GameManager 会返回选关界面。
 func show_result(text: String, victory := false) -> void:
 	_close_pause_menu()
+	hide_fail_banner()
 	_overlay_text.text = text
 	_next.visible = victory
 	if victory:
@@ -243,6 +233,18 @@ func show_result(text: String, victory := false) -> void:
 func hide_result() -> void:
 	_overlay.visible = false
 	_rating_panel.visible = false
+	hide_fail_banner()
+
+
+## 失败横幅：屏幕下部提示按 R 重试；失败不是模态，玩家仍可按 R。
+func show_fail_banner(text := "本关已失败，按 R 重试本关卡") -> void:
+	_close_pause_menu()
+	_fail_banner_label.text = text
+	_fail_banner.visible = true
+
+
+func hide_fail_banner() -> void:
+	_fail_banner.visible = false
 
 
 func set_hint_available(value: bool) -> void:

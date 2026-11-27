@@ -5,33 +5,6 @@
 [ext_resource type="Script" uid="uid://dqob88e71yqmj" path="res://Scripts/UI/JuicyButton.gd" id="4_button"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/SettingsOverlay.tscn" id="5_settings"]
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7ig1k"]
-bg_color = Color(0.972549, 0.9490196, 0.8627451, 1)
-border_color = Color(0.972549, 0.9490196, 0.8627451, 1)
-corner_radius_top_left = 22
-corner_radius_top_right = 22
-corner_radius_bottom_right = 22
-corner_radius_bottom_left = 22
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_8yrgd"]
-content_margin_left = 8.0
-content_margin_top = 8.0
-content_margin_right = 8.0
-content_margin_bottom = 8.0
-bg_color = Color(1, 0.976, 0.886, 0.96)
-border_width_left = 3
-border_width_top = 3
-border_width_right = 3
-border_width_bottom = 3
-border_color = Color(0.314, 0.514, 0.365, 0.82)
-corner_radius_top_left = 22
-corner_radius_top_right = 22
-corner_radius_bottom_right = 22
-corner_radius_bottom_left = 22
-shadow_color = Color(0.18, 0.31, 0.22, 0.2)
-shadow_size = 7
-shadow_offset = Vector2(0, 5)
-
 [sub_resource type="StyleBoxLine" id="StyleBoxLine_8yrgd"]
 thickness = 2
 
@@ -81,7 +54,7 @@ mouse_filter = 2
 layout_mode = 0
 offset_left = 23.0
 offset_top = 18.0
-offset_right = 623.0
+offset_right = 386.0
 offset_bottom = 102.0
 mouse_filter = 2
 theme_type_variation = &"SoftPanel"
@@ -89,23 +62,6 @@ theme_type_variation = &"SoftPanel"
 [node name="StatsRow" type="HBoxContainer" parent="Root/TopArea/StatsPanel" unique_id=1005584401]
 layout_mode = 2
 theme_override_constants/separation = 18
-
-[node name="RemainingBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584402]
-custom_minimum_size = Vector2(96, 0)
-layout_mode = 2
-theme_override_constants/separation = 0
-
-[node name="RemainingCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/RemainingBlock" unique_id=1005584403]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
-theme_override_font_sizes/font_size = 16
-text = "剩余步数"
-
-[node name="RemainingValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/RemainingBlock" unique_id=1005584404]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
-theme_override_font_sizes/font_size = 26
-text = "0"
 
 [node name="LengthBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584405]
 custom_minimum_size = Vector2(96, 0)
@@ -157,23 +113,6 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
 theme_override_font_sizes/font_size = 26
 text = "0"
-
-[node name="MechBlock" type="VBoxContainer" parent="Root/TopArea/StatsPanel/StatsRow" unique_id=1005584414]
-custom_minimum_size = Vector2(96, 0)
-layout_mode = 2
-theme_override_constants/separation = 0
-
-[node name="MechCaption" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/MechBlock" unique_id=1005584415]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.35, 0.45, 0.38, 1)
-theme_override_font_sizes/font_size = 16
-text = "花丛成长"
-
-[node name="MechValue" type="Label" parent="Root/TopArea/StatsPanel/StatsRow/MechBlock" unique_id=1005584416]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.157, 0.345, 0.231, 1)
-theme_override_font_sizes/font_size = 26
-text = "0/0"
 
 [node name="ActionsPanel" type="PanelContainer" parent="Root/TopArea" unique_id=1118754327]
 layout_mode = 1
@@ -571,4 +510,33 @@ focus_mode = 0
 text = "复制种子"
 script = ExtResource("4_button")
 
-[node name="SettingsOverlay" parent="." instance=ExtResource("5_settings")]
+[node name="FailBanner" type="MarginContainer" parent="Root" unique_id=300000101]
+visible = false
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 300.0
+offset_top = -96.0
+offset_right = -300.0
+offset_bottom = -18.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BannerRow" type="HBoxContainer" parent="Root/FailBanner" unique_id=300000102]
+layout_mode = 2
+alignment = 1
+
+[node name="BannerText" type="Label" parent="Root/FailBanner/BannerRow" unique_id=300000103]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.98, 0.86, 0.86, 1)
+theme_override_colors/font_outline_color = Color(0.35, 0.06, 0.06, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 24
+text = "本关已失败，按 R 重试本关卡"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SettingsOverlay" parent="." unique_id=1358432799 instance=ExtResource("5_settings")]

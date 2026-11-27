@@ -44,9 +44,23 @@ public partial class GeneratorBench : Node
         int height = GetInt(args, "height", 0);
         int candidates = GetInt(args, "candidates", 1);
         int maxAttempts = GetInt(args, "attempts", 32);
+        int searchAttempts = GetInt(args, "search", 10);
+        string budgetName = GetString(args, "budget", "unlimited");
+        GenerationBudget genBudget = budgetName is "unlimited" or "none"
+            ? GenerationBudget.Unlimited()
+            : GenerationBudget.For(GenerationBudget.ParseTier(budgetName));
         int genver = GetInt(args, "genver", GenerationService.GeneratorVersion);
         bool checkDeterminism = GetInt(args, "determinism", 1) != 0;
         bool gate = GetInt(args, "gate", 1) != 0;
+        bool adaptive = GetInt(args, "adaptive", 1) != 0;
+        string modelName = GetString(args, "model", "poisson");
+        ObstacleModel obstacleModel = modelName switch
+        {
+            "blue_noise" or "blue" => ObstacleModel.BlueNoise,
+            "noise_cluster" or "noise" => ObstacleModel.NoiseCluster,
+            "wall_growth" or "wall" => ObstacleModel.WallGrowth,
+            _ => ObstacleModel.PoissonCluster,
+        };
         GeneratorModel genModel = GetString(args, "generator", "route_first") switch
         {
             "template" or "structured" => GeneratorModel.TemplateField,
@@ -85,6 +99,7 @@ public partial class GeneratorBench : Node
         int budgetAborted = 0;
         var reasonCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var sourceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var endpointAgg = new Dictionary<string, EndpointAgg>(StringComparer.Ordinal);
         foreach (string tag in TagNames)
         {
             tagCounts[tag] = 0;
@@ -103,13 +118,16 @@ public partial class GeneratorBench : Node
                     Difficulty = tier,
                     Candidates = candidates,
                     MaxAttempts = maxAttempts,
+                    SearchAttempts = searchAttempts,
                     GeneratorModel = genModel,
+                    ObstacleModel = obstacleModel,
                     LevelIndex = (int)(seed - 1),
                     EnableFairnessGate = gate,
+                    AdaptiveBudget = adaptive,
                 };
 
                 var watch = Stopwatch.StartNew();
-                var job = new GenerationJob(cfg, GenerationBudget.Unlimited());
+                var job = new GenerationJob(cfg, genBudget);
                 GenerationResult result = job.RunToCompletion();
                 watch.Stop();
                 timings.Add(watch.Elapsed.TotalMilliseconds);
@@ -150,11 +168,15 @@ public partial class GeneratorBench : Node
                         Difficulty = tier,
                         Candidates = candidates,
                         MaxAttempts = maxAttempts,
+                        SearchAttempts = searchAttempts,
                         GeneratorModel = genModel,
+                        ObstacleModel = obstacleModel,
                         LevelIndex = (int)(seed - 1),
                         EnableFairnessGate = gate,
+                        AdaptiveBudget = adaptive,
                     };
-                    GenerationResult second = RouteFirstGenerator.GenerateCore(secondCfg);
+                    var secondJob = new GenerationJob(secondCfg, genBudget);
+                    GenerationResult second = secondJob.RunToCompletion();
                     same = second.Success
                         && second.Spec.ToJson() == specJson
                         && second.Solution.Route == result.Solution.Route;
@@ -198,8 +220,26 @@ public partial class GeneratorBench : Node
                 row["archive_cells"] = result.ArchiveCells;
                 row["budget_aborted"] = result.BudgetAborted;
                 row["work_units"] = Round3(result.WorkUnits);
+                row["ms"] = Round3(watch.Elapsed.TotalMilliseconds);
                 row["spec_sha256"] = Sha256(specJson);
                 row["deterministic"] = same;
+
+                EndpointDiag diag = AnalyzeEndpoints(result.Spec, result.Solution.Route);
+                row["spawn"] = new JsonArray(diag.Spawn.X, diag.Spawn.Y);
+                row["goal"] = new JsonArray(diag.Goal.X, diag.Goal.Y);
+                row["spawn_margin"] = diag.SpawnMargin;
+                row["goal_margin"] = diag.GoalMargin;
+                row["spawn_degree"] = diag.SpawnDegree;
+                row["goal_degree"] = diag.GoalDegree;
+                row["separation"] = diag.Separation;
+                row["loop_rank"] = diag.LoopRank;
+                row["choice_cells"] = diag.ChoiceCells;
+                var decoyArr = new JsonArray();
+                foreach (double offset in diag.DecoyOffsets)
+                {
+                    decoyArr.Add(Round3(offset));
+                }
+                row["decoy_offsets"] = decoyArr;
 
                 if (replayOk)
                 {
@@ -224,6 +264,12 @@ public partial class GeneratorBench : Node
                         }
                     }
                     stepValues.Add(result.Solution.Steps);
+                    if (!endpointAgg.TryGetValue(tier, out EndpointAgg agg))
+                    {
+                        agg = new EndpointAgg();
+                        endpointAgg[tier] = agg;
+                    }
+                    agg.Add(diag);
                     string sizeKey = $"{result.Spec.Width}x{result.Spec.Height}";
                     sizeCounts[sizeKey] = sizeCounts.TryGetValue(sizeKey, out int sc) ? sc + 1 : 1;
                     string source = result.Spec.GenerationSource;
@@ -253,8 +299,12 @@ public partial class GeneratorBench : Node
                 ["height"] = height,
                 ["candidates"] = candidates,
                 ["max_attempts"] = maxAttempts,
+                ["search_attempts"] = searchAttempts,
+                ["budget_tier"] = budgetName,
                 ["generator"] = genModel.ToString(),
+                ["model"] = modelName,
                 ["gate"] = gate,
+                ["adaptive"] = adaptive,
                 ["determinism_checked"] = checkDeterminism,
             },
             ["seeds"] = seedRows,
@@ -291,7 +341,11 @@ public partial class GeneratorBench : Node
             ["tag_coverage"] = TagCoverageJson(tagCounts, ok),
             ["fail_reasons"] = ReasonJson(reasonCounts),
             ["source_counts"] = SizeHistJson(sourceCounts),
+            ["endpoint_stats"] = EndpointStatsJson(endpointAgg),
             ["determinism_checked"] = checkDeterminism,
+            ["budget_tier"] = budgetName,
+            ["search_attempts"] = searchAttempts,
+            ["adaptive"] = adaptive,
         };
 
         string benchPath = outDir.TrimEnd('/') + $"/bench_gv{genver}.json";
@@ -323,6 +377,208 @@ public partial class GeneratorBench : Node
         GD.Print($"[GeneratorBench] out={benchPath}");
 
         GetTree().Quit(failed == 0 && determinismOk ? 0 : 1);
+    }
+
+    private sealed class EndpointDiag
+    {
+        public Cell Spawn;
+        public Cell Goal;
+        public int SpawnMargin;
+        public int GoalMargin;
+        public int SpawnDegree;
+        public int GoalDegree;
+        public int Separation;
+        public int LoopRank;
+        public int ChoiceCells;
+        public List<double> DecoyOffsets = new();
+    }
+
+    private sealed class EndpointAgg
+    {
+        public int Count;
+        public int SpawnMarginSum;
+        public int GoalMarginSum;
+        public int SpawnDegSum;
+        public int GoalDegSum;
+        public int SeparationSum;
+        public int LoopRankSum;
+        public int ChoiceCellsSum;
+        public int DecoyCount;
+        public int DecoyNearStart;
+
+        public void Add(EndpointDiag d)
+        {
+            Count++;
+            SpawnMarginSum += d.SpawnMargin;
+            GoalMarginSum += d.GoalMargin;
+            SpawnDegSum += d.SpawnDegree;
+            GoalDegSum += d.GoalDegree;
+            SeparationSum += d.Separation;
+            LoopRankSum += d.LoopRank;
+            ChoiceCellsSum += d.ChoiceCells;
+            DecoyCount += d.DecoyOffsets.Count;
+            foreach (double offset in d.DecoyOffsets)
+            {
+                if (offset < 1.0 / 3.0)
+                {
+                    DecoyNearStart++;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 端点 / 诱饵诊断：到可走区外接框的边距、度数、静态度数环边、路线可选步，
+    /// 以及每片诱饵花瓣在路线上的最近位置（0 = 起点侧，1 = 终点侧）。
+    /// </summary>
+    private static EndpointDiag AnalyzeEndpoints(LevelSpec spec, string route)
+    {
+        var diag = new EndpointDiag { Spawn = spec.Spawn, Goal = spec.Goal };
+        var walkable = new HashSet<Cell>();
+        foreach (Cell c in spec.Floor)
+        {
+            if (!spec.Obstacles.Contains(c))
+            {
+                walkable.Add(c);
+            }
+        }
+        if (walkable.Count == 0)
+        {
+            return diag;
+        }
+        int minX = int.MaxValue;
+        int minY = int.MaxValue;
+        int maxX = int.MinValue;
+        int maxY = int.MinValue;
+        foreach (Cell c in walkable)
+        {
+            minX = Math.Min(minX, c.X);
+            minY = Math.Min(minY, c.Y);
+            maxX = Math.Max(maxX, c.X);
+            maxY = Math.Max(maxY, c.Y);
+        }
+
+        int Margin(Cell c)
+        {
+            return Math.Min(Math.Min(c.X - minX, maxX - c.X), Math.Min(c.Y - minY, maxY - c.Y));
+        }
+
+        int Degree(Cell c)
+        {
+            int deg = 0;
+            foreach (Cell n in GridModel.Neighbors(c))
+            {
+                if (walkable.Contains(n))
+                {
+                    deg++;
+                }
+            }
+            return deg;
+        }
+
+        diag.SpawnMargin = Margin(spec.Spawn);
+        diag.GoalMargin = Margin(spec.Goal);
+        diag.SpawnDegree = Degree(spec.Spawn);
+        diag.GoalDegree = Degree(spec.Goal);
+        diag.Separation = Math.Abs(spec.Spawn.X - spec.Goal.X) + Math.Abs(spec.Spawn.Y - spec.Goal.Y);
+        int degreeSum = 0;
+        foreach (Cell c in walkable)
+        {
+            degreeSum += Degree(c);
+        }
+        diag.LoopRank = degreeSum / 2 - walkable.Count + 1;
+
+        var routeCells = new List<Cell> { spec.Spawn };
+        Cell head = spec.Spawn;
+        foreach (char ch in route)
+        {
+            Vector2I step = DirFor(ch);
+            head += new Cell(step.X, step.Y);
+            routeCells.Add(head);
+        }
+        var grid = new GridModel(spec.Origin, spec.Width, spec.Height);
+        foreach (Cell c in spec.Floor)
+        {
+            grid.Floor.Add(c);
+        }
+        foreach (Cell c in spec.Obstacles)
+        {
+            grid.Obstacles.Add(c);
+        }
+        Dictionary<Cell, int> distGoal = grid.BfsDistMap(spec.Goal, new HashSet<Cell>());
+        var onRoute = new HashSet<Cell>(routeCells);
+        for (int i = 1; i < routeCells.Count; i++)
+        {
+            Cell cell = routeCells[i];
+            if (!distGoal.TryGetValue(cell, out int d))
+            {
+                continue;
+            }
+            int options = 0;
+            foreach (Cell n in GridModel.Neighbors(cell))
+            {
+                if (walkable.Contains(n) && distGoal.TryGetValue(n, out int dn) && dn == d - 1)
+                {
+                    options++;
+                }
+            }
+            if (options >= 2)
+            {
+                diag.ChoiceCells++;
+            }
+        }
+
+        int steps = Math.Max(route.Length, 1);
+        foreach (Cell food in spec.Foods)
+        {
+            if (onRoute.Contains(food))
+            {
+                continue;
+            }
+            int nearestIndex = 0;
+            int nearest = int.MaxValue;
+            for (int i = 0; i < routeCells.Count; i++)
+            {
+                int md = Math.Abs(routeCells[i].X - food.X) + Math.Abs(routeCells[i].Y - food.Y);
+                if (md < nearest)
+                {
+                    nearest = md;
+                    nearestIndex = i;
+                }
+                if (nearest == 0)
+                {
+                    break;
+                }
+            }
+            diag.DecoyOffsets.Add(nearestIndex / (double)steps);
+        }
+        return diag;
+    }
+
+    private static JsonObject EndpointStatsJson(Dictionary<string, EndpointAgg> agg)
+    {
+        var obj = new JsonObject();
+        foreach (string tier in agg.Keys.OrderBy(k => k, StringComparer.Ordinal))
+        {
+            EndpointAgg a = agg[tier];
+            int n = Math.Max(1, a.Count);
+            obj[tier] = new JsonObject
+            {
+                ["n"] = a.Count,
+                ["avg_spawn_margin"] = Round3(a.SpawnMarginSum / (double)n),
+                ["avg_goal_margin"] = Round3(a.GoalMarginSum / (double)n),
+                ["avg_spawn_degree"] = Round3(a.SpawnDegSum / (double)n),
+                ["avg_goal_degree"] = Round3(a.GoalDegSum / (double)n),
+                ["avg_separation"] = Round3(a.SeparationSum / (double)n),
+                ["avg_loop_rank"] = Round3(a.LoopRankSum / (double)n),
+                ["avg_choice_cells"] = Round3(a.ChoiceCellsSum / (double)n),
+                ["decoy_count"] = a.DecoyCount,
+                ["decoy_near_start_ratio"] = a.DecoyCount > 0
+                    ? Round3(a.DecoyNearStart / (double)a.DecoyCount)
+                    : 0,
+            };
+        }
+        return obj;
     }
 
     private static bool Replay(string specJson, string route)

@@ -47,6 +47,7 @@ public partial class CoreTests : Node
         TestDesignFairnessGate();
         TestGenerationPortfolio();
         TestDeadEndInjection();
+        TestAdaptiveBudget();
         TestTemplateLibrary();
         TestInteractionPlanner();
         TestTemplateService();
@@ -684,6 +685,34 @@ public partial class CoreTests : Node
         Check(ratio > 0.5 && ratio < 0.7, $"Portfolio: hard 结构图占比≈60%（实际 {ratio:P0}）");
         Check(GenerationPortfolio.StructuredPercent("expert")
             > GenerationPortfolio.StructuredPercent("easy"), "Portfolio: 档位越高结构图占比越高");
+    }
+
+    /// <summary>v4 自适应预算：候选数受上限约束，提前停止时写入诊断指标。</summary>
+    private void TestAdaptiveBudget()
+    {
+        var cfg = new GeneratorConfig
+        {
+            Seed = 11,
+            Difficulty = "normal",
+            Candidates = 4,
+            MaxAttempts = 16,
+            SearchAttempts = 6,
+            EnableFairnessGate = false,
+            AdaptiveBudget = true,
+        };
+        var job = new GenerationJob(cfg, GenerationBudget.For(GenerationBudgetTier.Loading));
+        GenerationResult result = job.RunToCompletion();
+        if (!result.Success)
+        {
+            return;
+        }
+        Check(job.CandidatesUsed >= 1 && job.CandidatesUsed <= 4,
+            $"自适应预算: 候选数在 [1,4]（实际 {job.CandidatesUsed}）");
+        Check(result.Metrics.ContainsKey("candidates_used"), "自适应预算: 写入 candidates_used");
+        if (job.AdaptiveStopped)
+        {
+            Check(result.Metrics.ContainsKey("adaptive_stop"), "自适应预算: 写入 adaptive_stop");
+        }
     }
 
     /// <summary>v4 结构注入：只开与主路线单点相连的深度 2 死胡同，并放诱饵花瓣。</summary>

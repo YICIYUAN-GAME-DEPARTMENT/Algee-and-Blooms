@@ -68,12 +68,30 @@ public static class PairSelector
             return results;
         }
 
-        List<Cell> spawnOrder = RouteFirstGenerator.PeripheralSpawns(spawnPool, rng);
-        int spawnLimit = Math.Min(spawnOrder.Count, 5);
+        List<Cell> spawnOrder = RouteFirstGenerator.SpawnOrder(spawnPool, rng, field.Tier);
+        int spawnLimit = Math.Min(spawnOrder.Count, field.Tier is "hard" or "expert" ? 8 : 6);
         var empty = new HashSet<Cell>();
+        var walkableSet = new HashSet<Cell>(spawnPool);
+        RouteFirstGenerator.WalkBounds bounds = RouteFirstGenerator.BoundsOf(spawnPool);
         int pairCount = 0;
 
-        for (int si = 0; si < spawnLimit && pairCount < MaxPairs; si++)
+        // 端点内移优先于交互分：否则高 fork/truncation 的边缘端点会稳定压过内部端点，
+        // 让“起点终点都在边缘”的旧观感继续出现。
+        bool requireInteriorGoal = field.Tier is "hard" or "expert";
+        int interiorPairs = 0;
+        int EndpointClass(PairCandidate c)
+        {
+            int spawnMargin = RouteFirstGenerator.BorderMargin(c.Spawn, bounds);
+            int goalMargin = RouteFirstGenerator.BorderMargin(c.Goal, bounds);
+            if (requireInteriorGoal)
+            {
+                return spawnMargin >= 2 && goalMargin >= 2 ? 0 : spawnMargin >= 2 ? 1 : 2;
+            }
+            return spawnMargin >= 2 ? 0 : 1;
+        }
+
+        // 已有 3 个内部端点候选就提前停：再多也只是被 KeepTop 截掉，白白增加求解耗时。
+        for (int si = 0; si < spawnLimit && pairCount < MaxPairs && interiorPairs < KeepTop; si++)
         {
             if (GenerationTrace.Expired)
             {
@@ -93,33 +111,39 @@ public static class PairSelector
             {
                 continue;
             }
-            goalPool.Sort((a, b) =>
-            {
-                int da = Math.Abs(dist[a] - targetSteps);
-                int db = Math.Abs(dist[b] - targetSteps);
-                return da != db ? da.CompareTo(db) : a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X.CompareTo(b.X);
-            });
+            RouteFirstGenerator.SortGoalPool(goalPool, dist, targetSteps, walkableSet, field.Tier,
+                bounds);
 
-            int goalLimit = Math.Min(goalPool.Count, 3);
-            for (int gi = 0; gi < goalLimit && pairCount < MaxPairs; gi++)
+            int goalLimit = Math.Min(goalPool.Count, 2);
+            for (int gi = 0; gi < goalLimit && pairCount < MaxPairs && interiorPairs < KeepTop; gi++)
             {
                 if (GenerationTrace.Expired)
                 {
                     break;
                 }
                 PairCandidate candidate = TryPair(field, grid, spawn, goalPool[gi], instance,
-                    targetSteps, minSteps, maxSteps);
+                    targetSteps, minSteps, maxSteps, bounds);
                 if (candidate == null)
                 {
                     continue;
                 }
                 results.Add(candidate);
                 pairCount++;
+                if (EndpointClass(candidate) == 0)
+                {
+                    interiorPairs++;
+                }
             }
         }
 
         results.Sort((a, b) =>
         {
+            int classA = EndpointClass(a);
+            int classB = EndpointClass(b);
+            if (classA != classB)
+            {
+                return classA.CompareTo(classB);
+            }
             int cmp = b.Rank.CompareTo(a.Rank);
             if (cmp != 0)
             {
@@ -142,7 +166,8 @@ public static class PairSelector
     }
 
     private static PairCandidate TryPair(LevelSpec field, GridModel sharedGrid, Cell spawn, Cell goal,
-        TemplateInstance instance, int targetSteps, int minSteps, int maxSteps)
+        TemplateInstance instance, int targetSteps, int minSteps, int maxSteps,
+        RouteFirstGenerator.WalkBounds bounds)
     {
         // 每对使用独立网格：死路雕刻产生的障碍不能泄漏到其他候选。
         GridModel grid = CloneGrid(sharedGrid);
@@ -286,13 +311,20 @@ public static class PairSelector
 
         double fit = 1.0 - Math.Min(1.0,
             Math.Abs(route.Length - targetSteps) / (double)Math.Max(4, maxSteps - minSteps + 1));
+        // 端点位于可走区内部（多方向进入）时小幅加分：边缘端点容易把谜题压成单路。
+        int spawnMargin = RouteFirstGenerator.BorderMargin(spawn, bounds);
+        int goalMargin = RouteFirstGenerator.BorderMargin(goal, bounds);
+        double interiorBonus = spawnMargin >= 2 && goalMargin >= 2
+            ? 0.08
+            : spawnMargin >= 2 ? 0.04 : 0.0;
         // 结构项优先：岔路 / 截断（回路）比"贴着机关"更能体现交互。
         double rank = 0.28 * fit
             + 0.15 * Math.Min(threat, 4) / 4.0
             + 0.25 * Math.Min(forkSteps, 4) / 4.0
             + 0.20 * Math.Min(truncations, 2) / 2.0
             + 0.05 * Math.Min(decoyFoods, 2) / 2.0
-            + 0.07 * Math.Clamp(instance.Prior, 0.0, 1.0);
+            + 0.07 * Math.Clamp(instance.Prior, 0.0, 1.0)
+            + interiorBonus;
 
         return new PairCandidate
         {
@@ -474,36 +506,64 @@ public static class PairSelector
         required = Math.Max(required, 1);
 
         // 1) 诱饵：优先雕刻死路，其次用路线旁任意空格（不额外封路）。
+        //    每片诱饵沿路线均匀铺开（2 片 = 1/3 与 2/3）；先排除路线前 1/4，
+        //    只有实在找不到时才回退到起点附近。
+        int minDecoyIndex = Math.Max(1, spec.Tier == "easy" ? path.Count / 5 : path.Count / 4);
+        minDecoyIndex = Math.Min(minDecoyIndex, path.Count - 2);
         int carveTries = decoyTarget + 1;
         for (int i = 0; i < carveTries && decoys.Count < decoyTarget; i++)
         {
-            if (TryCarveDeadEnd(spec, path, grid, out Cell dead, out _)
-                && !pathSet.Contains(dead) && !decoys.Contains(dead)
-                && !spec.MechCenters.Contains(dead))
+            int preferred = PreferredDecoyIndex(path.Count, decoys.Count, decoyTarget);
+            if (TryCarveDeadEnd(spec, path, grid, preferred, minDecoyIndex, out Cell dead, out _)
+                || TryCarveDeadEnd(spec, path, grid, preferred, 1, out dead, out _))
             {
-                decoys.Add(dead);
+                if (!pathSet.Contains(dead) && !decoys.Contains(dead)
+                    && !spec.MechCenters.Contains(dead))
+                {
+                    decoys.Add(dead);
+                }
             }
         }
-        if (decoys.Count < decoyTarget)
+        while (decoys.Count < decoyTarget)
         {
-            foreach (Cell p in path)
+            int preferred = PreferredDecoyIndex(path.Count, decoys.Count, decoyTarget);
+            List<Cell> decoyCells = decoys;
+            Cell best = Cell.Zero;
+            int bestScore = int.MaxValue;
+            void Scan(int fromIndex)
             {
-                foreach (Cell n in GridModel.Neighbors(p))
+                for (int j = fromIndex; j < path.Count - 1; j++)
                 {
-                    if (grid.IsFloor(n) && !grid.Obstacles.Contains(n)
-                        && !n.Equals(spec.Spawn) && !n.Equals(spec.Goal)
-                        && !pathSet.Contains(n) && !decoys.Contains(n)
-                        && !spec.MechCenters.Contains(n))
+                    Cell p = path[j];
+                    foreach (Cell n in GridModel.Neighbors(p))
                     {
-                        decoys.Add(n);
-                        break;
+                        if (!grid.IsFloor(n) || grid.Obstacles.Contains(n)
+                            || n.Equals(spec.Spawn) || n.Equals(spec.Goal)
+                            || pathSet.Contains(n) || decoyCells.Contains(n)
+                            || spec.MechCenters.Contains(n))
+                        {
+                            continue;
+                        }
+                        int score = Math.Abs(j - preferred) * 16
+                            + Math.Abs(n.X - p.X) * 2 + Math.Abs(n.Y - p.Y);
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            best = n;
+                        }
                     }
                 }
-                if (decoys.Count >= decoyTarget)
-                {
-                    break;
-                }
             }
+            Scan(minDecoyIndex);
+            if (bestScore == int.MaxValue)
+            {
+                Scan(1);
+            }
+            if (bestScore == int.MaxValue)
+            {
+                break;
+            }
+            decoys.Add(best);
         }
         if (decoys.Count == 0)
         {
@@ -551,16 +611,37 @@ public static class PairSelector
         return true;
     }
 
+    /// <summary>第 placed 片诱饵的目标路线位置：沿路线按 (placed+1)/(target+1) 均分。</summary>
+    private static int PreferredDecoyIndex(int pathCount, int placed, int target)
+    {
+        if (pathCount <= 3)
+        {
+            return 1;
+        }
+        int segments = Math.Max(1, target + 1);
+        int index = (int)Math.Round((pathCount - 1) * (placed + 1) / (double)segments);
+        return Math.Clamp(index, 1, pathCount - 2);
+    }
+
     /// <summary>
     /// 在路径旁"雕刻"一个死路：选路径格 p 的一个非路径邻居 n，把 n 的其余邻居涂成静态障碍，
     /// 使 n 度为 1。这样必须走进 n 再原路踩身体返回（产生截断/回路）。
+    /// preferredIndex 让死路落在路线的指定位置附近（诱饵均摊，避免全挤在起点）；
+    /// minIndex 排除路线前段（起点附近），找不到时才由调用方回退到 1。
     /// 只改当前候选的 spec.Obstacles 与局部 grid，不影响其他候选。
     /// </summary>
     private static bool TryCarveDeadEnd(LevelSpec spec, IReadOnlyList<Cell> path, GridModel grid,
-        out Cell cell, out int pathIndex)
+        int preferredIndex, int minIndex, out Cell cell, out int pathIndex)
     {
         var pathSet = new HashSet<Cell>(path);
-        for (int j = 1; j < path.Count - 1; j++)
+        Cell bestCell = Cell.Zero;
+        int bestIndex = -1;
+        List<Cell> bestWalls = null;
+        int bestScore = int.MaxValue;
+        int fromIndex = Math.Clamp(minIndex, 1, Math.Max(1, path.Count - 2));
+
+        // 第一遍：把路线旁已有地板的其它邻居封成墙。
+        for (int j = fromIndex; j < path.Count - 1; j++)
         {
             Cell p = path[j];
             foreach (Cell n in GridModel.Neighbors(p))
@@ -589,26 +670,50 @@ public static class PairSelector
                 {
                     continue;
                 }
+                // 少封路优先：直接利用既有凹室（无需封邻居）能保留地图环路，
+                // 其次才考虑需要封 1–2 个邻居的宽格；两项都服从“沿路线均摊”。
+                int walls = 0;
                 foreach (Cell m in others)
                 {
-                    if (!grid.IsFloor(m))
+                    if (grid.IsFloor(m))
                     {
-                        continue;
-                    }
-                    grid.Obstacles.Add(m);
-                    if (!spec.Obstacles.Contains(m))
-                    {
-                        spec.Obstacles.Add(m);
+                        walls++;
                     }
                 }
-                cell = n;
-                pathIndex = j;
-                return true;
+                int score = walls * 64 + Math.Abs(j - preferredIndex) * 8
+                    + Math.Abs(n.X - p.X) * 2 + Math.Abs(n.Y - p.Y);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestCell = n;
+                    bestIndex = j;
+                    bestWalls = others;
+                }
             }
+        }
+        if (bestIndex >= 0)
+        {
+            foreach (Cell m in bestWalls)
+            {
+                if (!grid.IsFloor(m))
+                {
+                    continue;
+                }
+                grid.Obstacles.Add(m);
+                if (!spec.Obstacles.Contains(m))
+                {
+                    spec.Obstacles.Add(m);
+                }
+            }
+            cell = bestCell;
+            pathIndex = bestIndex;
+            return true;
         }
 
         // 第二遍：路线被墙夹住时，把相邻的非可走格挖成单格死路（新增地板 + 封住其余出口）。
-        for (int j = 1; j < path.Count - 1; j++)
+        bestScore = int.MaxValue;
+        bestWalls = null;
+        for (int j = fromIndex; j < path.Count - 1; j++)
         {
             Cell p = path[j];
             foreach (Cell n in GridModel.Neighbors(p))
@@ -635,30 +740,46 @@ public static class PairSelector
                 {
                     continue;
                 }
-                // 把 n 变成地板，并封住除 p 以外的可走邻居。
-                grid.Obstacles.Remove(n);
-                grid.Floor.Add(n);
-                if (!spec.Floor.Contains(n))
-                {
-                    spec.Floor.Add(n);
-                }
-                spec.Obstacles.Remove(n);
+                var walls = new List<Cell>();
                 foreach (Cell m in GridModel.Neighbors(n))
                 {
-                    if (m.Equals(p) || !grid.IsFloor(m))
+                    if (!m.Equals(p) && grid.IsFloor(m))
                     {
-                        continue;
-                    }
-                    grid.Obstacles.Add(m);
-                    if (!spec.Obstacles.Contains(m))
-                    {
-                        spec.Obstacles.Add(m);
+                        walls.Add(m);
                     }
                 }
-                cell = n;
-                pathIndex = j;
-                return true;
+                int score = walls.Count * 64 + Math.Abs(j - preferredIndex) * 8
+                    + Math.Abs(n.X - p.X) * 2 + Math.Abs(n.Y - p.Y);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestCell = n;
+                    bestIndex = j;
+                    bestWalls = walls;
+                }
             }
+        }
+        if (bestIndex >= 0)
+        {
+            // 把 n 变成地板，并封住除 p 以外的可走邻居。
+            grid.Obstacles.Remove(bestCell);
+            grid.Floor.Add(bestCell);
+            if (!spec.Floor.Contains(bestCell))
+            {
+                spec.Floor.Add(bestCell);
+            }
+            spec.Obstacles.Remove(bestCell);
+            foreach (Cell m in bestWalls)
+            {
+                grid.Obstacles.Add(m);
+                if (!spec.Obstacles.Contains(m))
+                {
+                    spec.Obstacles.Add(m);
+                }
+            }
+            cell = bestCell;
+            pathIndex = bestIndex;
+            return true;
         }
 
         cell = Cell.Zero;

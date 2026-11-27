@@ -41,6 +41,8 @@ var _solver: RefCounted = null
 func _ensure_core() -> void:
 	if _core == null:
 		_core = load(RULE_STATE_SCRIPT).new()
+		# 表现层：判负只提示、不锁死后续移动（求解/生成/测试仍用默认的"死局即终结"）
+		_core.call("SetEndOnDeadlock", false)
 
 
 ## 注入关卡静态数据；必须在 start() 前调用一次

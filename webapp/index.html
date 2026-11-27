@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1d2a22">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23fdfbef'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%2359b06d'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%232d6fb7'/%3E%3C/svg%3E">
+<title>阿吉与花海 · 第 6 关试玩</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main id="stage">
+  <canvas id="game" width="1280" height="720" aria-label="第 6 关棋盘"></canvas>
+
+  <div id="hud">
+    <header class="hud-top">
+      <section class="stats" aria-label="关卡状态">
+        <div class="stat">
+          <span class="stat-caption">身长</span>
+          <span class="stat-value" id="stat-length">1/6</span>
+        </div>
+        <div class="stat">
+          <span class="stat-caption">花瓣效益</span>
+          <span class="stat-value" id="stat-petal">8</span>
+        </div>
+        <div class="stat" id="stat-grow-block">
+          <span class="stat-caption">距生长</span>
+          <span class="stat-value" id="stat-grow">5</span>
+        </div>
+      </section>
+      <nav class="actions" aria-label="操作">
+        <button class="btn" id="btn-restart" type="button">重新开始</button>
+        <button class="btn" id="btn-pause" type="button">暂停</button>
+        <button class="btn" id="btn-sound" type="button">音效 开</button>
+        <button class="btn" id="btn-fullscreen" type="button">全屏</button>
+      </nav>
+    </header>
+
+    <div class="fail-banner" id="fail-banner" role="status" hidden>本关已失败，按 R 或点「重开」重试本关卡</div>
+
+    <div class="dpad" id="dpad" aria-label="方向键">
+      <button class="dpad-btn dpad-up" data-dir="up" type="button" aria-label="上">▲</button>
+      <button class="dpad-btn dpad-left" data-dir="left" type="button" aria-label="左">◀</button>
+      <button class="dpad-btn dpad-down" data-dir="down" type="button" aria-label="下">▼</button>
+      <button class="dpad-btn dpad-right" data-dir="right" type="button" aria-label="右">▶</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="win-panel" hidden>
+    <section class="panel result-panel" role="dialog" aria-modal="true" aria-labelledby="win-title">
+      <h1 id="win-title">胜利！</h1>
+      <p class="result-steps" id="win-steps">步数 0</p>
+      <div class="panel-actions">
+        <button class="btn btn-primary" id="btn-replay" type="button">再玩一次</button>
+        <button class="btn" id="btn-share" type="button">分享</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="overlay" id="pause-panel" hidden>
+    <section class="panel result-panel" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+      <h1 id="pause-title">暂停</h1>
+      <div class="panel-actions">
+        <button class="btn btn-primary" id="btn-resume" type="button">继续</button>
+        <button class="btn" id="btn-pause-restart" type="button">重开</button>
+        <button class="btn" id="btn-pause-sound" type="button">音效 开</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="overlay" id="rotate-hint" hidden>
+    <section class="panel rotate-panel" role="dialog" aria-modal="true" aria-labelledby="rotate-title">
+      <h1 id="rotate-title">请将手机横屏</h1>
+      <p>横屏可以完整看到第 6 关的棋盘。</p>
+      <button class="btn btn-primary" id="btn-rotate-continue" type="button">仍要竖屏游玩</button>
+    </section>
+  </div>
+
+  <div id="loading" class="loading">正在加载…</div>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
