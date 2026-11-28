@@ -170,7 +170,7 @@
 | 工具 | `tools/` | headless 生成 / 迁移 / 校验 / 求解器（`LevelSolver`），不参与游戏运行 |
 | 算法与规则 | `Scripts/Algorithms/`（C#） | 规则唯一实现 / 网格模型 / 搜索 / 生成 / 评分；不访问节点 / 场景 / 信号 |
 | 测试 | `tests/` | 引擎内 headless：`tests/core/` C# 断言场景 + `tests/fixtures/` 快照；未引入 GUT 等外部框架 |
-| Web 演示 | `webapp/` | 第 6 关独立 HTML5 复刻 Demo（分享试玩；规则为 C# 镜像，非权威）；数据由 `webapp/tools/export_level.mjs` 从场景导出；Godot 经 `.gdignore` 跳过；素材副本不走 LFS |
+| Web 演示 | `webapp/` | L1–L7 独立 HTML5 复刻 Demo（分享试玩；规则为 C# 镜像，非权威）；数据由 `webapp/tools/export_levels.mjs` 从场景导出；Godot 经 `.gdignore` 跳过；素材副本不走 LFS |
 | 美术 / 音频 | `Art/` / `Audio/` / `UI/` | 正式资源 + 占位；登记见开发文档 §3.9 |
 
 ---

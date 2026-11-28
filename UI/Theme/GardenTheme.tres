@@ -15,10 +15,10 @@ corner_radius_bottom_right = 30
 corner_radius_bottom_left = 30
 
 [sub_resource type="StyleBoxFlat" id="StyleButtonHover"]
-content_margin_left = 36
-content_margin_top = 18
-content_margin_right = 36
-content_margin_bottom = 18
+content_margin_left = 36.0
+content_margin_top = 18.0
+content_margin_right = 36.0
+content_margin_bottom = 18.0
 bg_color = Color(0.79, 0.933, 0.82, 1)
 border_width_left = 3
 border_width_top = 3
@@ -34,10 +34,10 @@ shadow_size = 11
 shadow_offset = Vector2(0, 7.5)
 
 [sub_resource type="StyleBoxFlat" id="StyleButtonNormal"]
-content_margin_left = 36
-content_margin_top = 18
-content_margin_right = 36
-content_margin_bottom = 18
+content_margin_left = 36.0
+content_margin_top = 18.0
+content_margin_right = 36.0
+content_margin_bottom = 18.0
 bg_color = Color(1, 0.976, 0.886, 0.94)
 border_width_left = 3
 border_width_top = 3
@@ -53,9 +53,9 @@ shadow_size = 8
 shadow_offset = Vector2(0, 6)
 
 [sub_resource type="StyleBoxFlat" id="StyleButtonPressed"]
-content_margin_left = 36
+content_margin_left = 36.0
 content_margin_top = 19.5
-content_margin_right = 36
+content_margin_right = 36.0
 content_margin_bottom = 16.5
 bg_color = Color(0.49, 0.729, 0.541, 1)
 border_width_left = 3
@@ -69,10 +69,10 @@ corner_radius_bottom_right = 27
 corner_radius_bottom_left = 27
 
 [sub_resource type="StyleBoxFlat" id="StyleCounterCard"]
-content_margin_left = 12
-content_margin_top = 12
-content_margin_right = 12
-content_margin_bottom = 12
+content_margin_left = 12.0
+content_margin_top = 12.0
+content_margin_right = 12.0
+content_margin_bottom = 12.0
 bg_color = Color(1, 0.976, 0.886, 0.96)
 border_width_left = 5
 border_width_top = 5
@@ -88,10 +88,10 @@ shadow_size = 11
 shadow_offset = Vector2(0, 7.5)
 
 [sub_resource type="StyleBoxFlat" id="StyleGardenPanel"]
-content_margin_left = 42
-content_margin_top = 36
-content_margin_right = 42
-content_margin_bottom = 36
+content_margin_left = 42.0
+content_margin_top = 36.0
+content_margin_right = 42.0
+content_margin_bottom = 36.0
 bg_color = Color(1, 0.965, 0.847, 0.93)
 border_width_left = 3
 border_width_top = 3
@@ -111,10 +111,10 @@ color = Color(0.353, 0.565, 0.4, 0.45)
 thickness = 3
 
 [sub_resource type="StyleBoxFlat" id="StylePrimaryHover"]
-content_margin_left = 42
-content_margin_top = 21
-content_margin_right = 42
-content_margin_bottom = 21
+content_margin_left = 42.0
+content_margin_top = 21.0
+content_margin_right = 42.0
+content_margin_bottom = 21.0
 bg_color = Color(1, 0.718, 0.455, 1)
 border_width_left = 3
 border_width_top = 3
@@ -130,10 +130,10 @@ shadow_size = 14
 shadow_offset = Vector2(0, 9)
 
 [sub_resource type="StyleBoxFlat" id="StylePrimaryNormal"]
-content_margin_left = 42
-content_margin_top = 21
-content_margin_right = 42
-content_margin_bottom = 21
+content_margin_left = 42.0
+content_margin_top = 21.0
+content_margin_right = 42.0
+content_margin_bottom = 21.0
 bg_color = Color(0.949, 0.62, 0.373, 1)
 border_width_left = 3
 border_width_top = 3
@@ -149,9 +149,9 @@ shadow_size = 11
 shadow_offset = Vector2(0, 7.5)
 
 [sub_resource type="StyleBoxFlat" id="StylePrimaryPressed"]
-content_margin_left = 42
+content_margin_left = 42.0
 content_margin_top = 22.5
-content_margin_right = 42
+content_margin_right = 42.0
 content_margin_bottom = 19.5
 bg_color = Color(0.784, 0.392, 0.259, 1)
 border_width_left = 3
@@ -165,10 +165,10 @@ corner_radius_bottom_right = 30
 corner_radius_bottom_left = 30
 
 [sub_resource type="StyleBoxFlat" id="StyleResultPanel"]
-content_margin_left = 63
-content_margin_top = 48
-content_margin_right = 63
-content_margin_bottom = 51
+content_margin_left = 63.0
+content_margin_top = 48.0
+content_margin_right = 63.0
+content_margin_bottom = 51.0
 bg_color = Color(1, 0.969, 0.867, 0.98)
 border_width_left = 5
 border_width_top = 5
@@ -184,10 +184,10 @@ shadow_size = 30
 shadow_offset = Vector2(0, 15)
 
 [sub_resource type="StyleBoxFlat" id="StyleSoftPanel"]
-content_margin_left = 18
-content_margin_top = 15
-content_margin_right = 18
-content_margin_bottom = 15
+content_margin_left = 18.0
+content_margin_top = 15.0
+content_margin_right = 18.0
+content_margin_bottom = 15.0
 bg_color = Color(1, 0.984, 0.914, 0.9)
 border_width_left = 3
 border_width_top = 3
@@ -203,10 +203,10 @@ shadow_size = 12
 shadow_offset = Vector2(0, 6)
 
 [sub_resource type="StyleBoxFlat" id="StyleStatPill"]
-content_margin_left = 27
-content_margin_top = 12
-content_margin_right = 27
-content_margin_bottom = 12
+content_margin_left = 27.0
+content_margin_top = 12.0
+content_margin_right = 27.0
+content_margin_bottom = 12.0
 bg_color = Color(0.827, 0.941, 0.827, 0.96)
 border_width_left = 2
 border_width_top = 2

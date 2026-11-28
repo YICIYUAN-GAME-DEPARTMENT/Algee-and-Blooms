@@ -1,5 +1,5 @@
 /**
- * WebAudio 音效：音量/复音/变调参数来自 level_06.json 的 assets.sfx。
+ * WebAudio 音效：音量/复音/变调参数来自 levels.json 的 assets.sfx。
  * 首次用户手势后 resume；静音状态存 localStorage。
  */
 

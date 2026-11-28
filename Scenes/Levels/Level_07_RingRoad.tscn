@@ -1,0 +1,119 @@
+[gd_scene format=4 uid="uid://dxcsbok4rleh4"]
+
+[ext_resource type="Script" uid="uid://cuco0gkrl0x6u" path="res://Scripts/Systems/Level.gd" id="1_mrcdh"]
+[ext_resource type="Texture2D" uid="uid://buqsecenef4xu" path="res://Art/Backdrops/BG.png" id="2_aggn8"]
+[ext_resource type="TileSet" uid="uid://7oycm5hew1qb" path="res://Art/Tiles/TerrainGrassBlob47.tres" id="3_ura1s"]
+[ext_resource type="TileSet" uid="uid://dbo1r0lej0lvf" path="res://Art/Tiles/TerrainWall.tres" id="4_l3jau"]
+[ext_resource type="PackedScene" uid="uid://h0x68v0j1hvl" path="res://Scenes/Entities/PlayerSpawn.tscn" id="5_bu81o"]
+[ext_resource type="PackedScene" uid="uid://dprxeg350g0s0" path="res://Scenes/Entities/Goal.tscn" id="6_amwuv"]
+[ext_resource type="PackedScene" uid="uid://bn61nd5v2kny7" path="res://Scenes/Entities/Food.tscn" id="7_aggn8"]
+[ext_resource type="TileSet" uid="uid://dt67is7gr5ute" path="res://Art/Tiles/TerrainMech.tres" id="7_cnlai"]
+[ext_resource type="PackedScene" uid="uid://csejctbgwl6k5" path="res://Scenes/Entities/Mechanism.tscn" id="7_ura1s"]
+[ext_resource type="TileSet" uid="uid://p6tsn13h62ix" path="res://Art/Tiles/PlayerSnek.tres" id="8_w634f"]
+[ext_resource type="Texture2D" uid="uid://i33cxvwf5fhm" path="res://Art/Sprites/Algee-all.png" id="9_8m46i"]
+[ext_resource type="Texture2D" uid="uid://ucu4yny62pq4" path="res://Art/Sprites/Charlie-Default.png" id="10_mdsm1"]
+[ext_resource type="PackedScene" uid="uid://brrve022q1vwa" path="res://Scenes/UI/LevelHUD.tscn" id="11_h0ohc"]
+
+[node name="Level" type="Node2D" unique_id=1958937689]
+script = ExtResource("1_mrcdh")
+level_id = 7
+level_name = "遵守环岛交规~"
+initial_max_len_override = 8
+food_len_gain_override = 5
+growth_step_interval_override = 6
+
+[node name="World" type="Node2D" parent="." unique_id=2088720049]
+scale = Vector2(1.5, 1.5)
+
+[node name="Bg" type="Sprite2D" parent="World" unique_id=1483216229]
+position = Vector2(640, 360)
+texture = ExtResource("2_aggn8")
+
+[node name="Ground" type="TileMapLayer" parent="World" unique_id=620393186]
+tile_map_data = PackedByteArray("AAAKAA4AAAAKAAAAAAALAAgAAAAKAAAAAAALAAkAAAAhAAAAAAALAAsAAAAEAAAAAAALAA4AAAAfAAAAAAAMAAgAAAAfAAAAAAAMAAkAAAAuAAAAAAAMAAsAAAApAAAAAAAMAAwAAAAEAAAAAAAMAA4AAAAfAAAAAAANAAcAAAAKAAAAAAANAAgAAAAhAAAAAAANAAkAAAAuAAAAAAANAAsAAAAuAAAAAAANAAwAAAAkAAAAAAANAA4AAAAfAAAAAAAOAAcAAAAfAAAAAAAOAAgAAAAuAAAAAAAOAAkAAAAuAAAAAAAOAAoAAAAuAAAAAAAOAAsAAAAuAAAAAAAOAAwAAAAkAAAAAAAOAA4AAAAfAAAAAAAPAAYAAAAKAAAAAAAPAAcAAAAhAAAAAAAPAAgAAAAuAAAAAAAPAAkAAAAuAAAAAAAPAAoAAAAuAAAAAAAPAAsAAAAuAAAAAAAPAAwAAAApAAAAAAAPAA0AAAAMAAAAAAAPAA4AAAAhAAAAAAAQAAYAAAAfAAAAAAAQAAcAAAAuAAAAAAAQAAgAAAAuAAAAAAAQAAkAAAAuAAAAAAAQAAoAAAAuAAAAAAAQAAsAAAAuAAAAAAAQAAwAAAAuAAAAAAAQAA0AAAAuAAAAAAAQAA4AAAAuAAAAAAARAAYAAAAfAAAAAAARAAcAAAAuAAAAAAARAAgAAAAuAAAAAAARAAkAAAAuAAAAAAARAAoAAAAuAAAAAAARAAsAAAAuAAAAAAARAAwAAAAuAAAAAAARAA0AAAAuAAAAAAARAA4AAAAuAAAAAAASAAYAAAAfAAAAAAASAAcAAAAuAAAAAAASAAgAAAAuAAAAAAASAAkAAAAuAAAAAAASAAoAAAAuAAAAAAASAAsAAAAuAAAAAAASAAwAAAAuAAAAAAASAA0AAAAuAAAAAAASAA4AAAAuAAAAAAATAAYAAAAfAAAAAAATAAcAAAAuAAAAAAATAAgAAAAuAAAAAAATAAkAAAAuAAAAAAATAAoAAAAuAAAAAAATAAsAAAAuAAAAAAATAAwAAAAuAAAAAAATAA0AAAAuAAAAAAATAA4AAAAuAAAAAAAUAAYAAAAfAAAAAAAUAAcAAAAuAAAAAAAUAAgAAAAuAAAAAAAUAAkAAAAuAAAAAAAUAAsAAAAuAAAAAAAUAAwAAAAsAAAAAAAUAA0AAAAqAAAAAAAUAA4AAAAtAAAAAAAVAAUAAAAKAAAAAAAVAAYAAAAhAAAAAAAVAAcAAAAuAAAAAAAVAAgAAAAuAAAAAAAVAAkAAAAuAAAAAAAVAAsAAAAuAAAAAAAVAAwAAAAkAAAAAAAVAA4AAAAfAAAAAAAWAAUAAAAfAAAAAAAWAAYAAAAuAAAAAAAWAAcAAAAuAAAAAAAWAAgAAAAuAAAAAAAWAAsAAAAsAAAAAAAWAAwAAAAiAAAAAAAXAAUAAAAfAAAAAAAXAAYAAAAuAAAAAAAXAAcAAAAuAAAAAAAXAAgAAAAuAAAAAAAXAAsAAAAkAAAAAAAYAAUAAAAfAAAAAAAYAAYAAAAuAAAAAAAYAAcAAAAuAAAAAAAYAAsAAAAiAAAAAAAZAAUAAAAfAAAAAAAZAAYAAAAuAAAAAAAZAAcAAAAuAAAAAAAaAAUAAAAaAAAAAAAaAAYAAAAtAAAAAAAaAAcAAAAuAAAAAAAbAAYAAAAfAAAAAAAbAAcAAAAuAAAAAAAcAAYAAAAaAAAAAAAcAAcAAAAtAAAAAAAGABAAAAACAAAAAAAHABAAAAAPAAAAAAAIAA8AAAAKAAAAAAAIABAAAAARAAAAAAAJAA8AAAAfAAAAAAAJABAAAAApAAAAAAAJABEAAAAEAAAAAAAKAAkAAAAKAAAAAAAKAAoAAAAEAAAAAAAKAA8AAAAhAAAAAAAKABAAAAAuAAAAAAAKABEAAAAkAAAAAAALAAoAAAApAAAAAAALAA8AAAAuAAAAAAALABAAAAAuAAAAAAALABEAAAAkAAAAAAAMAAoAAAAuAAAAAAAMAA8AAAAuAAAAAAAMABAAAAAuAAAAAAAMABEAAAAkAAAAAAANAAoAAAAuAAAAAAANAA8AAAAuAAAAAAANABAAAAAuAAAAAAANABEAAAAkAAAAAAAOAA8AAAAuAAAAAAAOABAAAAAuAAAAAAAOABEAAAAkAAAAAAAPAA8AAAAuAAAAAAAPABAAAAAuAAAAAAAPABEAAAAkAAAAAAAQAA8AAAAuAAAAAAAQABAAAAAuAAAAAAAQABEAAAAkAAAAAAARAA8AAAAuAAAAAAARABAAAAAuAAAAAAARABEAAAAkAAAAAAASAA8AAAAuAAAAAAASABAAAAAuAAAAAAASABEAAAAkAAAAAAATAA8AAAAuAAAAAAATABAAAAAuAAAAAAATABEAAAAkAAAAAAAUAAoAAAAuAAAAAAAUAA8AAAAuAAAAAAAUABAAAAAuAAAAAAAUABEAAAAkAAAAAAAVAAoAAAAuAAAAAAAVAA8AAAAuAAAAAAAVABAAAAAuAAAAAAAVABEAAAAkAAAAAAAWAAkAAAAuAAAAAAAWAAoAAAAuAAAAAAAWAA4AAAAfAAAAAAAWAA8AAAAuAAAAAAAWABAAAAAsAAAAAAAWABEAAAAiAAAAAAAXAAkAAAAuAAAAAAAXAAoAAAAuAAAAAAAXAA4AAAAfAAAAAAAXAA8AAAAuAAAAAAAXABAAAAAkAAAAAAAYAAgAAAAuAAAAAAAYAAkAAAAuAAAAAAAYAAoAAAAsAAAAAAAYAA4AAAAfAAAAAAAYAA8AAAAuAAAAAAAYABAAAAAkAAAAAAAZAAgAAAAuAAAAAAAZAAkAAAAuAAAAAAAZAAoAAAAkAAAAAAAZAA4AAAAfAAAAAAAZAA8AAAAuAAAAAAAZABAAAAAkAAAAAAAaAAgAAAAuAAAAAAAaAAkAAAAuAAAAAAAaAAoAAAAkAAAAAAAaAA4AAAAfAAAAAAAaAA8AAAAuAAAAAAAaABAAAAAkAAAAAAAbAAgAAAAuAAAAAAAbAAkAAAAuAAAAAAAbAAoAAAAkAAAAAAAbAA8AAAAuAAAAAAAbABAAAAAkAAAAAAAcAAgAAAAuAAAAAAAcAAkAAAAuAAAAAAAcAAoAAAAkAAAAAAAcAA8AAAAuAAAAAAAcABAAAAAkAAAAAAAdAAcAAAAfAAAAAAAdAAgAAAAuAAAAAAAdAAkAAAAsAAAAAAAdAAoAAAAiAAAAAAAdAA8AAAAtAAAAAAAdABAAAAAkAAAAAAAeAAcAAAAaAAAAAAAeAAgAAAAqAAAAAAAeAAkAAAAiAAAAAAAeAA8AAAAfAAAAAAAfAA8AAAAfAAAAAAAeABAAAAAkAAAAAAAgAA8AAAAcAAAAAAAhAA8AAAAPAAAAAAAiAA8AAAANAAAAAAAfABAAAAAkAAAAAAAgABAAAAAiAAAAAAAbAA4AAAAfAAAAAAAcAA4AAAAfAAAAAAAdAA4AAAAaAAAAAAA=")
+tile_set = ExtResource("3_ura1s")
+
+[node name="Obstacles" type="TileMapLayer" parent="World" unique_id=1559005235]
+tile_map_data = PackedByteArray("AAAQAAoAAAAkAAAAAAARAAkAAAAfAAAAAAAXAAYAAAAKAAAAAAAYAAYAAAAfAAAAAAALAA4AAAACAAAAAAAMAA4AAAAXAAAAAAAMAA8AAAAEAAAAAAANAA4AAAAcAAAAAAANAA8AAAAiAAAAAAAOAA4AAAANAAAAAAAPAAoAAAARAAAAAAARAAoAAAApAAAAAAARAAsAAAAJAAAAAAARAAwAAAABAAAAAAASAAkAAAAaAAAAAAASAAoAAAAqAAAAAAASAAsAAAAiAAAAAAAWAAcAAAACAAAAAAAXAAcAAAAZAAAAAAAXAAgAAAAMAAAAAAAXAAkAAAAEAAAAAAAYAAcAAAAuAAAAAAAYAAgAAAAuAAAAAAAYAAkAAAAkAAAAAAAZAAYAAAAaAAAAAAAZAAcAAAAtAAAAAAAZAAgAAAAsAAAAAAAZAAkAAAAiAAAAAAAaAAcAAAAaAAAAAAAaAAgAAAAjAAAAAAAbAAgAAAANAAAAAAAbABAAAAAOAAAAAAAOAAwAAAACAAAAAAAPAAwAAAANAAAAAAAPAAYAAAAAAAAAAAAOAAcAAAANAAAAAAANAAcAAAACAAAAAAAOAAoAAAAPAAAAAAANAAoAAAACAAAAAAAQAAkAAAAfAAAAAAAPAAkAAAAKAAAAAAAbAA8AAAAFAAAAAAAdAA8AAAABAAAAAAAdAA4AAAAFAAAAAAAaABAAAAACAAAAAAA=")
+tile_set = ExtResource("4_l3jau")
+
+[node name="EntityRoot" type="Node2D" parent="World" unique_id=1535406282]
+
+[node name="PlayerSpawn" parent="World/EntityRoot" unique_id=1658100739 instance=ExtResource("5_bu81o")]
+position = Vector2(336, 528)
+cell = Vector2i(10, 16)
+
+[node name="Goal" parent="World/EntityRoot" unique_id=1654257061 instance=ExtResource("6_amwuv")]
+position = Vector2(1072, 496)
+cell = Vector2i(33, 15)
+
+[node name="Food" parent="World/EntityRoot" unique_id=2013670240 instance=ExtResource("7_aggn8")]
+position = Vector2(496, 432)
+cell = Vector2i(15, 13)
+
+[node name="Food2" parent="World/EntityRoot" unique_id=1885481855 instance=ExtResource("7_aggn8")]
+position = Vector2(432, 528)
+cell = Vector2i(13, 16)
+
+[node name="Food3" parent="World/EntityRoot" unique_id=414333730 instance=ExtResource("7_aggn8")]
+position = Vector2(912, 272)
+cell = Vector2i(28, 8)
+
+[node name="Food4" parent="World/EntityRoot" unique_id=1455814746 instance=ExtResource("7_aggn8")]
+position = Vector2(656, 272)
+cell = Vector2i(20, 8)
+
+[node name="Food5" parent="World/EntityRoot" unique_id=649174030 instance=ExtResource("7_aggn8")]
+position = Vector2(432, 368)
+cell = Vector2i(13, 11)
+
+[node name="Food6" parent="World/EntityRoot" unique_id=1130512881 instance=ExtResource("7_aggn8")]
+position = Vector2(752, 176)
+cell = Vector2i(23, 5)
+
+[node name="Food7" parent="World/EntityRoot" unique_id=980736196 instance=ExtResource("7_aggn8")]
+position = Vector2(816, 336)
+cell = Vector2i(25, 10)
+
+[node name="Food8" parent="World/EntityRoot" unique_id=533765060 instance=ExtResource("7_aggn8")]
+position = Vector2(528, 272)
+cell = Vector2i(16, 8)
+
+[node name="Mechanism" parent="World/EntityRoot" unique_id=2091959493 instance=ExtResource("7_ura1s")]
+position = Vector2(592, 368)
+initial_level = -4
+cell = Vector2i(18, 11)
+
+[node name="Mechanism2" parent="World/EntityRoot" unique_id=291554681 instance=ExtResource("7_ura1s")]
+position = Vector2(784, 208)
+initial_level = -5
+cell = Vector2i(24, 6)
+
+[node name="Mechanism3" parent="World/EntityRoot" unique_id=294798210 instance=ExtResource("7_ura1s")]
+position = Vector2(720, 496)
+initial_level = -7
+cell = Vector2i(22, 15)
+
+[node name="MechanismCells" type="TileMapLayer" parent="World" unique_id=1566093649]
+tile_set = ExtResource("7_cnlai")
+
+[node name="PlayerCells" type="TileMapLayer" parent="World" unique_id=1322017958]
+tile_set = ExtResource("8_w634f")
+
+[node name="PlayerFx" type="Node2D" parent="World" unique_id=901787452]
+
+[node name="Head" type="Sprite2D" parent="World/PlayerFx" unique_id=1446686610]
+visible = false
+z_index = 1
+texture = ExtResource("9_8m46i")
+hframes = 3
+vframes = 4
+
+[node name="Tail" type="Sprite2D" parent="World/PlayerFx" unique_id=576386316]
+visible = false
+texture = ExtResource("10_mdsm1")
+
+[node name="LevelHUD" parent="." unique_id=1443197510 instance=ExtResource("11_h0ohc")]
+
+[node name="Cam" type="Camera2D" parent="." unique_id=962089457]
+position = Vector2(960, 540)

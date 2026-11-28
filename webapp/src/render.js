@@ -1,11 +1,9 @@
 /**
  * Canvas 表现层：只读 RuleState，不修改规则状态。
- * 逻辑坐标固定 1280×720，格子 32px；绘制顺序对应第 6 关场景树。
+ * 逻辑视口来自 levels.json（1920×1080），格子 32px；按每关 World/Camera 变换绘制。
  */
 
 const CELL = 32;
-const VIEW_W = 1280;
-const VIEW_H = 720;
 const INF = 1e9;
 
 const BLOB_DIRS = [
@@ -64,24 +62,20 @@ export async function loadImages(imageMap) {
 }
 
 export class Renderer {
-  constructor(canvas, data, images) {
+  constructor(canvas, bundle, images) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.data = data;
+    this.bundle = bundle;
     this.images = images;
+    this.level = null;
+    this.data = null;
     this.freeze = false;
     this.growAnim = null;
     this.walkStart = -INF;
     this.coreCache = new Map();
+    this.scale = 1;
 
-    this.maskToCol = new Map(data.blob.mask_cols.map((mask, col) => [mask, col]));
-
-    this.groundCells = new Map(data.layers.ground.cells.map((c) => [key(c.x, c.y), c.col]));
-    this.obstacleCells = new Map(data.layers.obstacles.cells.map((c) => [key(c.x, c.y), c.col]));
-    this.groundSet = new Set(this.groundCells.keys());
-    this.obstacleSet = new Set(this.obstacleCells.keys());
-
-    this.validateStaticBlobs();
+    this.maskToCol = new Map(bundle.blob.mask_cols.map((mask, col) => [mask, col]));
 
     this.groundImage = images.grass;
     this.wallImage = images.wall;
@@ -95,6 +89,23 @@ export class Renderer {
     this.bgImage = images.bg;
   }
 
+  setLevel(level) {
+    this.level = level;
+    this.data = {
+      ...level,
+      render: this.bundle.render,
+      blob: this.bundle.blob,
+      viewport: this.bundle.viewport,
+    };
+    this.groundCells = new Map(level.layers.ground.cells.map((c) => [key(c.x, c.y), c.col]));
+    this.obstacleCells = new Map(level.layers.obstacles.cells.map((c) => [key(c.x, c.y), c.col]));
+    this.groundSet = new Set(this.groundCells.keys());
+    this.obstacleSet = new Set(this.obstacleCells.keys());
+    this.validateStaticBlobs();
+    this.finishGrow();
+    this.walkStart = -INF;
+  }
+
   resize(cssWidth, cssHeight, dpr) {
     const scale = Math.min(2, Math.max(1, dpr || 1));
     const width = Math.max(1, Math.round(cssWidth * scale));
@@ -105,7 +116,7 @@ export class Renderer {
     }
     this.canvas.style.width = `${cssWidth}px`;
     this.canvas.style.height = `${cssHeight}px`;
-    this.scale = width / VIEW_W;
+    this.scale = width / this.bundle.viewport[0];
   }
 
   validateStaticBlobs() {
@@ -145,13 +156,22 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const scale = this.scale ?? 1;
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    if (!this.data) return;
+
+    const [vw, vh] = this.bundle.viewport;
+    const backing = this.scale ?? 1;
+    const { world, camera } = this.data.view;
+    const sx = backing * world.scale[0] * camera.zoom[0];
+    const sy = backing * world.scale[1] * camera.zoom[1];
+    const tx = backing * ((world.position[0] - camera.position[0]) * camera.zoom[0] + vw / 2);
+    const ty = backing * ((world.position[1] - camera.position[1]) * camera.zoom[1] + vh / 2);
+    ctx.setTransform(sx, 0, 0, sy, tx, ty);
     ctx.imageSmoothingEnabled = false;
 
     const animNow = this.freeze ? this.walkStart + this.data.render.head.idleSec + 1 : now;
-    this.drawLayer(this.groundCells, this.groundImage, 0, null);
-    this.drawLayer(this.obstacleCells, this.wallImage, 0, null);
+    this.drawBackground();
+    this.drawLayer(this.groundCells, this.groundImage, 0);
+    this.drawLayer(this.obstacleCells, this.wallImage, 0);
 
     for (const foodKey of rule.foods) {
       const [x, y] = parseKey(foodKey);
@@ -167,7 +187,20 @@ export class Renderer {
     this.drawHead(rule.trail, animNow);
   }
 
-  drawLayer(cells, image, row, set) {
+  drawBackground() {
+    const bg = this.data.view.background;
+    const w = this.bgImage.width * bg.scale[0];
+    const h = this.bgImage.height * bg.scale[1];
+    this.ctx.drawImage(
+      this.bgImage,
+      Math.round(bg.position[0] - w / 2),
+      Math.round(bg.position[1] - h / 2),
+      Math.round(w),
+      Math.round(h)
+    );
+  }
+
+  drawLayer(cells, image, row) {
     const ctx = this.ctx;
     for (const [cellKey, col] of cells) {
       const [x, y] = parseKey(cellKey);

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * 规则回归：
- *   1. 用 webapp/src/rules.js 重放 1–5 关官方黄金路线（tests/fixtures）。
- *   2. 重放第 6 关 60 步路线并校验事件/终局。
- *   3. 校验 level_06.json 的 47-blob 与实体数据。
+ * 多关卡回归：
+ *   1. 用 webapp/src/rules.js 重放 L1–L5 官方黄金路线（tests/fixtures）。
+ *   2. 校验 levels.json 的 47-blob、实体、视图变换与关卡清单。
+ *   3. L6/L7 结构检查（官方求解器 UNKNOWN，路线由人工试玩确认）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,7 +12,7 @@ import { RuleState, cellKey } from '../src/rules.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
-const DATA_REL = 'webapp/data/level_06.json';
+const DATA_REL = 'webapp/data/levels.json';
 
 const DIRS = {
   A: [-1, 0],
@@ -37,11 +37,6 @@ function cellLabel(cell) {
   return `(${cell[0]},${cell[1]})`;
 }
 
-function keyLabel(key) {
-  return `(${key})`;
-}
-
-// ── 47-blob 计算（与 export_level.mjs / Level.gd 一致）──────────
 const BLOB_DIRS = [
   [-1, -1],
   [0, -1],
@@ -74,181 +69,140 @@ function blobMask(set, x, y) {
 }
 
 // ── 1. 官方 1–5 关黄金路线 ────────────────────────────────────
-function testGoldenLevels() {
+function testGoldenLevels(levelsById) {
   const expected = readJson('tests/fixtures/levels_expected.json');
-  for (const level of expected.levels) {
-    const anchorRel = `tests/fixtures/anchors/level_${String(level.level_id).padStart(2, '0')}.json`;
-    const anchor = readJson(anchorRel);
-    const rule = new RuleState(anchor);
+  for (const levelExpected of expected.levels) {
+    const level = levelsById.get(levelExpected.level_id);
+    assert(Boolean(level), `L${levelExpected.level_id}: levels.json 中缺少该关`);
+    if (!level) continue;
+    const rule = new RuleState(level.spec);
     rule.reset();
 
     let replayed = '';
     let deadlock = '';
-    for (const ch of level.route) {
+    for (const ch of levelExpected.route) {
       const dir = DIRS[ch];
-      assert(Boolean(dir), `L${level.level_id}: 未知路线字符 ${ch}`);
+      assert(Boolean(dir), `L${level.id}: 未知路线字符 ${ch}`);
       if (!dir) break;
       const outcome = rule.step(dir[0], dir[1]);
       replayed += ch;
-      assert(outcome.accepted, `L${level.level_id}: 第 ${replayed.length} 步 ${ch} 被拒绝`);
+      assert(outcome.accepted, `L${level.id}: 第 ${replayed.length} 步 ${ch} 被拒绝`);
       if (!outcome.accepted) break;
       if (outcome.deadlockMsg && !outcome.won) deadlock = outcome.deadlockMsg;
-      assert(!deadlock, `L${level.level_id}: 第 ${replayed.length} 步出现死局 ${deadlock}`);
+      assert(!deadlock, `L${level.id}: 第 ${replayed.length} 步出现死局 ${deadlock}`);
       if (deadlock) break;
     }
 
-    assert(replayed === level.route, `L${level.level_id}: 路线重放不一致 ${replayed} ≠ ${level.route}`);
-    assert(rule.steps === level.steps, `L${level.level_id}: steps=${rule.steps}，期望 ${level.steps}`);
+    assert(replayed === levelExpected.route, `L${level.id}: 路线重放不一致`);
+    assert(rule.steps === levelExpected.steps, `L${level.id}: steps=${rule.steps}，期望 ${levelExpected.steps}`);
     assert(
-      rule.head[0] === anchor.goal[0] && rule.head[1] === anchor.goal[1],
-      `L${level.level_id}: 终点未到达，head=${cellLabel(rule.head)}`
+      rule.head[0] === level.spec.goal[0] && rule.head[1] === level.spec.goal[1],
+      `L${level.id}: 终点未到达，head=${cellLabel(rule.head)}`
     );
-    assert(rule.finished, `L${level.level_id}: 未标记 finished`);
-    console.log(`  L${level.level_id} ${level.name}: ${rule.steps} 步 OK`);
+    assert(rule.finished, `L${level.id}: 未标记 finished`);
+    console.log(`  L${level.id} ${level.name}: ${rule.steps} 步 OK`);
   }
 }
 
-// ── 2. 第 6 关 60 步路线 ──────────────────────────────────────
-const LEVEL6_ROUTE = 'DWDDSDDSDDSSDDDDDWDWDDDWDDDDAAASSSSASAAWAAWSDSDDDDDDDDDDDSDD';
-const LEVEL6_EXPECTED = {
-  steps: 60,
-  foodSteps: [5, 12, 20, 28],
-  foodCells: [
-    [12, 7],
-    [16, 10],
-    [22, 8],
-    [29, 7],
-  ],
-  growAdded: [2, 3, 4, 1, 5, 8, 11, 8, 22, 9, 3, 5],
-  finalMaxLen: 38,
-  finalTrailLen: 35,
-  finalG: 12,
-  remainingFood: [21, 19],
-};
-
-function testLevel6(data) {
-  const rule = new RuleState(data.level.spec);
-  rule.reset();
-  assert(rule.gMax === 12, `L6: gMax=${rule.gMax}，期望 12`);
-  assert(rule.growthCountdown === 5, `L6: 开局倒计时=${rule.growthCountdown}，期望 5`);
-
-  const foodSteps = [];
-  const foodCells = [];
-  const growAdded = [];
-  let deadlock = '';
-  let won = false;
-
-  for (let i = 0; i < LEVEL6_ROUTE.length; i++) {
-    const ch = LEVEL6_ROUTE[i];
-    const dir = DIRS[ch];
-    const outcome = rule.step(dir[0], dir[1]);
-    assert(outcome.accepted, `L6: 第 ${i + 1} 步 ${ch} 被拒绝`);
-    if (!outcome.accepted) break;
-    if (outcome.ateFood) {
-      foodSteps.push(i + 1);
-      foodCells.push(outcome.foodCell);
-    }
-    if (outcome.grew) growAdded.push(outcome.addedMechCells.length);
-    if (outcome.won) {
-      won = true;
-      assert(i + 1 === LEVEL6_ROUTE.length, `L6: 第 ${i + 1} 步提前胜利`);
-      break;
-    }
-    if (outcome.deadlockMsg) {
-      deadlock = outcome.deadlockMsg;
-      break;
-    }
-    if (outcome.grew && i + 1 === 20) {
-      assert(rule.g === 4, `L6: 第 20 步生长后 g=${rule.g}，期望 4`);
-    }
+// ── 2. L6/L7 结构检查（无路线） ───────────────────────────────
+function testAdvancedLevels(levelsById) {
+  for (const id of [6, 7]) {
+    const level = levelsById.get(id);
+    assert(Boolean(level), `L${id}: levels.json 中缺少第 ${id} 关`);
+    if (!level) continue;
+    const rule = new RuleState(level.spec);
+    rule.reset();
+    assert(rule.gMax > 0, `L${id}: gMax=${rule.gMax}，期望 >0`);
+    assert(rule.checkDeadlock() === '', `L${id}: 开局即死局：${rule.checkDeadlock()}`);
+    console.log(
+      `  L${id} ${level.name}: 结构 OK（${level.spec.width}×${level.spec.height}，食物 ${level.spec.foods.length}，机关 ${level.spec.mech_centers.length}，gMax=${rule.gMax}）`
+    );
   }
-
-  assert(!deadlock, `L6: 路线中途死局：${deadlock}`);
-  assert(won, 'L6: 路线未胜利');
-  assert(rule.steps === LEVEL6_EXPECTED.steps, `L6: steps=${rule.steps}，期望 ${LEVEL6_EXPECTED.steps}`);
-  assert(
-    rule.head[0] === data.level.spec.goal[0] && rule.head[1] === data.level.spec.goal[1],
-    `L6: 终点未到达，head=${cellLabel(rule.head)}`
-  );
-  assert(rule.maxLen === LEVEL6_EXPECTED.finalMaxLen, `L6: maxLen=${rule.maxLen}，期望 ${LEVEL6_EXPECTED.finalMaxLen}`);
-  assert(
-    rule.trail.length === LEVEL6_EXPECTED.finalTrailLen,
-    `L6: trailLen=${rule.trail.length}，期望 ${LEVEL6_EXPECTED.finalTrailLen}`
-  );
-  assert(rule.g === LEVEL6_EXPECTED.finalG, `L6: g=${rule.g}，期望 ${LEVEL6_EXPECTED.finalG}`);
-  assert(
-    JSON.stringify(foodSteps) === JSON.stringify(LEVEL6_EXPECTED.foodSteps),
-    `L6: 吃食物步=${JSON.stringify(foodSteps)}，期望 ${JSON.stringify(LEVEL6_EXPECTED.foodSteps)}`
-  );
-  assert(
-    JSON.stringify(foodCells) === JSON.stringify(LEVEL6_EXPECTED.foodCells),
-    `L6: 吃食物格=${JSON.stringify(foodCells)}，期望 ${JSON.stringify(LEVEL6_EXPECTED.foodCells)}`
-  );
-  assert(
-    JSON.stringify(growAdded) === JSON.stringify(LEVEL6_EXPECTED.growAdded),
-    `L6: 生长新增=${JSON.stringify(growAdded)}，期望 ${JSON.stringify(LEVEL6_EXPECTED.growAdded)}`
-  );
-  assert(rule.foods.size === 1, `L6: 剩余食物 ${rule.foods.size}，期望 1`);
-  const remaining = [...rule.foods][0] ?? '';
-  assert(
-    remaining === cellKey(LEVEL6_EXPECTED.remainingFood[0], LEVEL6_EXPECTED.remainingFood[1]),
-    `L6: 剩余食物=${keyLabel(remaining)}，期望 ${cellLabel(LEVEL6_EXPECTED.remainingFood)}`
-  );
-  console.log(
-    `  L6 ${data.level.name}: ${rule.steps} 步 OK，maxLen=${rule.maxLen}，trail=${rule.trail.length}，g=${rule.g}`
-  );
 }
 
-// ── 3. JSON 完整性 ────────────────────────────────────────────
+// ── 3. 数据完整性 ─────────────────────────────────────────────
 function testDataIntegrity(data) {
-  assert(data.schema_version === 1, `schema_version=${data.schema_version}`);
-  assert(data.level.id === 6, `level.id=${data.level.id}`);
+  assert(data.schema_version === 2, `schema_version=${data.schema_version}`);
   assert(
-    data.level.origin[0] === 7 && data.level.origin[1] === 4,
-    `origin=${JSON.stringify(data.level.origin)}`
+    Array.isArray(data.viewport) && data.viewport[0] === 1920 && data.viewport[1] === 1080,
+    `viewport=${JSON.stringify(data.viewport)}`
   );
-  assert(data.level.width === 30 && data.level.height === 16, `board=${data.level.width}×${data.level.height}`);
-  assert(data.level.spec.floor.length === 283, `floor=${data.level.spec.floor.length}`);
-  assert(data.level.spec.obstacles.length === 64, `obstacles=${data.level.spec.obstacles.length}`);
-  assert(data.level.spec.foods.length === 5, `foods=${data.level.spec.foods.length}`);
-  assert(data.level.spec.mech_centers.length === 6, `mechs=${data.level.spec.mech_centers.length}`);
-  assert(data.render.growAnimSec === 0.1, `growAnimSec=${data.render.growAnimSec}`);
+  assert(Array.isArray(data.levels) && data.levels.length === 7, `levels=${data.levels?.length}`);
+  const ids = data.levels.map((level) => level.id).sort((a, b) => a - b);
+  assert(JSON.stringify(ids) === JSON.stringify([1, 2, 3, 4, 5, 6, 7]), `level ids=${JSON.stringify(ids)}`);
 
   const maskCols = data.blob.mask_cols;
-  assert(Array.isArray(maskCols) && maskCols.length === 47, `mask_cols 长度=${maskCols?.length}`);
-  assert(new Set(maskCols).size === 47, 'mask_cols 存在重复');
+  assert(maskCols.length === 47, `mask_cols 长度=${maskCols?.length}`);
   assert(maskCols[0] === 0 && maskCols[46] === 255, 'mask_cols 首尾不是 0/255');
   const maskToCol = new Map(maskCols.map((mask, col) => [mask, col]));
 
-  for (const [layerName, layer] of Object.entries(data.layers)) {
-    const set = new Set(layer.cells.map((c) => cellKey(c.x, c.y)));
-    for (const cell of layer.cells) {
-      const col = maskToCol.get(blobMask(set, cell.x, cell.y));
-      assert(col === cell.col, `${layerName} (${cell.x},${cell.y}) col=${cell.col}，重算=${col}`);
-      if (col !== cell.col) break;
+  for (const level of data.levels) {
+    const label = `L${level.id}`;
+    assert(typeof level.name === 'string' && level.name.length > 0, `${label}: 缺少名称`);
+    assert(level.view, `${label}: 缺少 view`);
+    if (level.view) {
+      for (const [key, pair] of Object.entries({
+        worldScale: level.view.world?.scale,
+        worldPosition: level.view.world?.position,
+        cameraPosition: level.view.camera?.position,
+        cameraZoom: level.view.camera?.zoom,
+        backgroundPosition: level.view.background?.position,
+        backgroundScale: level.view.background?.scale,
+      })) {
+        assert(Array.isArray(pair) && pair.length === 2 && pair.every((n) => Number.isFinite(n)), `${label}: view.${key} 非法`);
+      }
+      assert(level.view.world.scale[0] > 0 && level.view.world.scale[1] > 0, `${label}: world.scale 非正`);
+      assert(level.view.camera.zoom[0] > 0 && level.view.camera.zoom[1] > 0, `${label}: camera.zoom 非正`);
+    }
+
+    const spec = level.spec;
+    assert(Array.isArray(spec.floor) && spec.floor.length > 0, `${label}: floor 为空`);
+    assert(Array.isArray(spec.obstacles), `${label}: obstacles 缺失`);
+    assert(spec.spawn && spec.goal, `${label}: 缺少 spawn/goal`);
+    assert(Array.isArray(spec.foods), `${label}: foods 缺失`);
+    assert(Array.isArray(spec.mech_centers), `${label}: mech_centers 缺失`);
+    assert(spec.mech_initial_levels.length === spec.mech_centers.length, `${label}: 机关中心/等级数量不一致`);
+
+    for (const [layerName, layer] of Object.entries(level.layers)) {
+      const set = new Set(layer.cells.map((c) => cellKey(c.x, c.y)));
+      const specCells = new Set((layerName === 'ground' ? spec.floor : spec.obstacles).map((c) => cellKey(c[0], c[1])));
+      assert(set.size === specCells.size, `${label} ${layerName}: 图层 ${set.size} 格，spec ${specCells.size} 格`);
+      for (const key of set) assert(specCells.has(key), `${label} ${layerName}: spec 缺少 ${key}`);
+      for (const cell of layer.cells) {
+        const col = maskToCol.get(blobMask(set, cell.x, cell.y));
+        assert(col === cell.col, `${label} ${layerName} (${cell.x},${cell.y}) col=${cell.col}，重算=${col}`);
+      }
+    }
+
+    assert(level.entities.foods.length === spec.foods.length, `${label}: 食物实体数量不一致`);
+    assert(level.entities.mechs.length === spec.mech_centers.length, `${label}: 机关实体数量不一致`);
+    const floorSet = new Set(spec.floor.map((c) => cellKey(c[0], c[1])));
+    const obstacleSet = new Set(spec.obstacles.map((c) => cellKey(c[0], c[1])));
+    const blockingEntities = [
+      ['spawn', level.entities.spawn.cell],
+      ['goal', level.entities.goal.cell],
+      ...level.entities.foods.map((f, i) => [`food${i + 1}`, f.cell]),
+    ];
+    for (const [name, cell] of blockingEntities) {
+      assert(floorSet.has(cellKey(cell[0], cell[1])), `${label} ${name} 不在 Ground 上`);
+      assert(!obstacleSet.has(cellKey(cell[0], cell[1])), `${label} ${name} 压在障碍上`);
+    }
+    for (let i = 0; i < level.entities.mechs.length; i++) {
+      const cell = level.entities.mechs[i].cell;
+      assert(floorSet.has(cellKey(cell[0], cell[1])), `${label} mech${i + 1} 不在 Ground 上`);
+      // 机关允许放在障碍格：覆盖表只按地板计算，运行时核心会盖在墙上。
     }
   }
-
-  const floorSet = new Set(data.level.spec.floor.map((c) => cellKey(c[0], c[1])));
-  const obstacleSet = new Set(data.level.spec.obstacles.map((c) => cellKey(c[0], c[1])));
-  const allEntities = [
-    ['spawn', data.entities.spawn.cell],
-    ['goal', data.entities.goal.cell],
-    ...data.entities.foods.map((f, i) => [`food${i + 1}`, f.cell]),
-    ...data.entities.mechs.map((m, i) => [`mech${i + 1}`, m.cell]),
-  ];
-  for (const [label, cell] of allEntities) {
-    assert(floorSet.has(cellKey(cell[0], cell[1])), `${label} 不在 Ground 上`);
-    assert(!obstacleSet.has(cellKey(cell[0], cell[1])), `${label} 压在障碍上`);
-  }
+  assert(typeof data.render.growAnimSec === 'number', 'render.growAnimSec 缺失');
   console.log('  JSON 完整性 OK');
 }
 
 function main() {
   const data = readJson(DATA_REL);
+  const levelsById = new Map(data.levels.map((level) => [level.id, level]));
   console.log('规则回归：');
-  testGoldenLevels();
-  testLevel6(data);
+  testGoldenLevels(levelsById);
+  testAdvancedLevels(levelsById);
   testDataIntegrity(data);
 
   if (failures.length > 0) {

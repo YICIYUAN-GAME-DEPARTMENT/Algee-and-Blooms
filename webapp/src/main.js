@@ -7,7 +7,7 @@ import { createInput } from './input.js';
 const PARAMS = new URLSearchParams(window.location.search);
 const DEBUG = PARAMS.get('debug') === '1';
 const FREEZE = PARAMS.get('freeze') === '1';
-const REPLAY = PARAMS.get('replay') === '1';
+const BEST_KEY = 'algee_blooms_best_steps';
 
 const DIRS = {
   up: [0, -1],
@@ -15,38 +15,60 @@ const DIRS = {
   left: [-1, 0],
   right: [1, 0],
 };
-const CHAR_DIRS = { A: 'left', D: 'right', W: 'up', S: 'down' };
-const LEVEL6_ROUTE = 'DWDDSDDSDDSSDDDDDWDWDDDWDDDDAAASSSSASAAWAAWSDSDDDDDDDDDDDSDD';
+
+function loadBestSteps() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BEST_KEY) ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveBestSteps(best) {
+  try {
+    localStorage.setItem(BEST_KEY, JSON.stringify(best));
+  } catch {
+    // 存储不可用时静默降级
+  }
+}
 
 async function boot() {
   const canvas = document.getElementById('game');
   const dpad = document.getElementById('dpad');
 
-  const response = await fetch('data/level_06.json', { cache: 'no-cache' });
+  const response = await fetch('data/levels.json', { cache: 'no-cache' });
   if (!response.ok) throw new Error(`关卡数据加载失败：HTTP ${response.status}`);
-  const data = await response.json();
-  const images = await loadImages(data.assets.images);
+  const bundle = await response.json();
+  const images = await loadImages(bundle.assets.images);
 
-  const audio = new AudioEngine(data.assets.sfx);
+  const audio = new AudioEngine(bundle.assets.sfx);
   audio.preload().catch((error) => console.warn('音效预加载失败：', error));
 
-  const rule = new RuleState(data.level.spec);
-  const renderer = new Renderer(canvas, data, images);
+  const renderer = new Renderer(canvas, bundle, images);
   renderer.freeze = FREEZE;
+  const levels = [...bundle.levels].sort((a, b) => a.id - b.id);
+  const levelsById = new Map(levels.map((level) => [level.id, level]));
+  let bestSteps = loadBestSteps();
 
+  let rule = null;
+  let currentLevel = null;
+  let mode = 'menu';
   let paused = false;
-  let won = false;
-  let failed = false;
   let inputLocked = false;
+  let failed = false;
   let growTimer = null;
   let actionToken = 0;
-  const growMs = Math.max(data.render.growAnimSec * 1000, 1);
+  const growMs = Math.max(bundle.render.growAnimSec * 1000, 1);
 
   const ui = new UI(document, {
     onButton: () => {
       audio.unlock();
       audio.play('uiBounce');
     },
+    onSelectLevel: (id) => startLevel(id),
+    onNext: () => nextLevel(),
+    onMenu: () => showMenu(),
     onRestart: () => restart(true),
     onTogglePause: () => togglePause(),
     onResume: () => resume(),
@@ -55,22 +77,88 @@ async function boot() {
     onShare: () => share(),
   });
 
+  ui.setLevels(levels);
+  ui.setMuted(audio.muted);
+
   function isBlocked() {
-    return paused || won || inputLocked || ui.isModalOpen();
+    return mode !== 'playing' || paused || inputLocked || ui.isModalOpen();
   }
 
   function updateHud() {
+    if (!rule || !currentLevel) return;
     ui.setStats({
       length: rule.trail.length,
       maxLen: rule.maxLen,
       petalGain: rule.foodLenGain,
+      petalVisible: currentLevel.spec.foods.length > 0,
       growthCountdown: rule.growthCountdown,
-      growthVisible: rule.hasMechanisms,
+      growthVisible: currentLevel.spec.mech_centers.length > 0,
     });
   }
 
+  function setLevelParam(id) {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('level', String(id));
+    else url.searchParams.delete('level');
+    window.history.replaceState(null, '', url);
+  }
+
+  function startLevel(id, updateUrl = true) {
+    const level = levelsById.get(Number(id));
+    if (!level) return;
+    actionToken += 1;
+    if (growTimer) {
+      window.clearTimeout(growTimer);
+      growTimer = null;
+    }
+    currentLevel = level;
+    rule = new RuleState(level.spec);
+    const claimed = rule.reset();
+    renderer.setLevel(level);
+    renderer.freeze = FREEZE;
+    if (!FREEZE) renderer.beginGrow(claimed, growMs, false);
+
+    mode = 'playing';
+    paused = false;
+    inputLocked = false;
+    failed = false;
+
+    ui.hideLevelSelect();
+    ui.hideWin();
+    ui.hidePause();
+    ui.hideFail();
+    ui.setLevelTitle(`第 ${level.id} 关 · ${level.name}`);
+    updateHud();
+    if (updateUrl) setLevelParam(level.id);
+  }
+
+  function showMenu() {
+    actionToken += 1;
+    if (growTimer) {
+      window.clearTimeout(growTimer);
+      growTimer = null;
+    }
+    mode = 'menu';
+    paused = false;
+    inputLocked = false;
+    failed = false;
+    renderer.finishGrow();
+    ui.showLevelSelect(bestSteps);
+    setLevelParam(null);
+  }
+
+  function nextLevel() {
+    if (!currentLevel) {
+      showMenu();
+      return;
+    }
+    const next = levels.find((level) => level.id === currentLevel.id + 1);
+    if (next) startLevel(next.id);
+    else showMenu();
+  }
+
   function step(dirName) {
-    if (isBlocked()) return;
+    if (isBlocked() || !rule) return;
     const dir = DIRS[dirName];
     if (!dir) return;
 
@@ -104,44 +192,33 @@ async function boot() {
   }
 
   function win() {
-    if (won || failed) return;
-    won = true;
+    if (mode !== 'playing' || failed || !currentLevel) return;
+    mode = 'won';
     audio.play('win');
-    ui.showWin(rule.steps);
+    const previous = bestSteps[currentLevel.id];
+    if (!previous || rule.steps < previous) {
+      bestSteps[currentLevel.id] = rule.steps;
+      saveBestSteps(bestSteps);
+    }
+    const next = levels.find((level) => level.id === currentLevel.id + 1);
+    ui.showWin(rule.steps, next?.name ?? '');
   }
 
   function fail() {
-    if (won || failed) return;
+    if (mode !== 'playing' || failed) return;
     failed = true;
     audio.play('lose');
     ui.showFail('本关已失败，按 R 或点「重开」重试本关卡');
   }
 
   function restart(force = false) {
+    if (!currentLevel) return;
     if (!force && ui.isModalOpen()) return;
-    actionToken += 1;
-    if (growTimer) {
-      window.clearTimeout(growTimer);
-      growTimer = null;
-    }
-    inputLocked = false;
-    paused = false;
-    won = false;
-    failed = false;
-
-    const claimed = rule.reset();
-    renderer.finishGrow();
-    renderer.walkStart = -Infinity;
-    if (!FREEZE) renderer.beginGrow(claimed, growMs, false);
-
-    ui.hideWin();
-    ui.hidePause();
-    ui.hideFail();
-    updateHud();
+    startLevel(currentLevel.id, false);
   }
 
   function togglePause() {
-    if (won || ui.isRotateOpen()) return;
+    if (mode !== 'playing' || ui.isRotateOpen()) return;
     if (paused) {
       resume();
     } else {
@@ -170,62 +247,53 @@ async function boot() {
   }
 
   async function share() {
-    const url = window.location.origin + window.location.pathname;
-    const text = `我在《阿吉与花海》第 6 关走了 ${rule.steps} 步，来试试：`;
+    if (!currentLevel) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('level', String(currentLevel.id));
+    const text = `我在《阿吉与花海》第 ${currentLevel.id} 关「${currentLevel.name}」走了 ${rule?.steps ?? 0} 步，来试试：`;
     if (navigator.share) {
       try {
-        await navigator.share({ title: '阿吉与花海 · 第 6 关', text, url });
+        await navigator.share({ title: '阿吉与花海', text, url: url.toString() });
         return;
       } catch (error) {
         if (error?.name === 'AbortError') return;
       }
     }
     try {
-      await navigator.clipboard.writeText(`${text}${url}`);
+      await navigator.clipboard.writeText(`${text}${url.toString()}`);
       ui.setShareFeedback('链接已复制');
       window.setTimeout(() => ui.setShareFeedback('分享'), 1600);
     } catch {
-      window.prompt('复制链接分享', url);
+      window.prompt('复制链接分享', url.toString());
     }
   }
 
   function fit() {
-    const scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
-    const width = Math.max(1, Math.floor(1280 * scale));
-    const height = Math.max(1, Math.floor(720 * scale));
+    const scale = Math.min(window.innerWidth / bundle.viewport[0], window.innerHeight / bundle.viewport[1]);
+    const width = Math.max(1, Math.floor(bundle.viewport[0] * scale));
+    const height = Math.max(1, Math.floor(bundle.viewport[1] * scale));
     renderer.resize(width, height, window.devicePixelRatio || 1);
   }
 
   function snapshot() {
     return {
-      steps: rule.steps,
-      finished: rule.finished,
-      g: rule.g,
-      maxLen: rule.maxLen,
-      trailLen: rule.trail.length,
-      head: rule.head,
-      foods: [...rule.foods],
-      claimed: rule.claimedKeys.length,
+      levelId: currentLevel?.id ?? null,
+      mode,
+      steps: rule?.steps ?? 0,
+      finished: rule?.finished ?? false,
+      g: rule?.g ?? 0,
+      maxLen: rule?.maxLen ?? 0,
+      trailLen: rule?.trail.length ?? 0,
+      head: rule?.head ?? null,
+      foods: rule ? [...rule.foods] : [],
+      claimed: rule?.claimedKeys.length ?? 0,
       failed,
-      won,
       paused,
       locked: inputLocked,
-      mechLevels: rule.mechLevels,
+      menu: ui.isMenuOpen(),
+      mechLevels: rule?.mechLevels ?? [],
     };
   }
-
-  async function replayRoute() {
-    for (const ch of LEVEL6_ROUTE) {
-      step(CHAR_DIRS[ch]);
-      await new Promise((resolve) => window.setTimeout(resolve, 130));
-    }
-    console.log('replay finished', snapshot());
-  }
-
-  const claimed = rule.reset();
-  updateHud();
-  ui.setMuted(audio.muted);
-  if (!FREEZE) renderer.beginGrow(claimed, growMs, false);
 
   fit();
   window.addEventListener('resize', fit);
@@ -249,7 +317,7 @@ async function boot() {
     }
     inputLocked = false;
     renderer.finishGrow();
-    if (!won && !paused && !ui.isRotateOpen()) {
+    if (mode === 'playing' && !paused && !ui.isRotateOpen()) {
       paused = true;
       ui.showPause();
     }
@@ -261,9 +329,23 @@ async function boot() {
         step(dirName);
         return snapshot();
       },
-      restart: () => restart(true),
+      startLevel: (id) => {
+        startLevel(id);
+        return snapshot();
+      },
+      menu: () => {
+        showMenu();
+        return snapshot();
+      },
+      nextLevel: () => {
+        nextLevel();
+        return snapshot();
+      },
+      restart: () => {
+        restart(true);
+        return snapshot();
+      },
       snapshot,
-      replay: replayRoute,
       wait: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
     };
   }
@@ -274,8 +356,13 @@ async function boot() {
   }
   window.requestAnimationFrame(loop);
 
+  const requested = Number(PARAMS.get('level'));
+  if (Number.isFinite(requested) && levelsById.has(requested)) {
+    startLevel(requested, false);
+  } else {
+    showMenu();
+  }
   ui.hideLoading();
-  if (DEBUG && REPLAY) replayRoute().catch((error) => console.error(error));
 }
 
 boot().catch((error) => {

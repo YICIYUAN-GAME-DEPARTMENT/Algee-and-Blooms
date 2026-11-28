@@ -1,9 +1,9 @@
 /**
- * 第 6 关 Web Demo 的规则镜像。
+ * L1–L7 Web Demo 的规则镜像。
  *
  * ⚠️ 非权威实现：玩法唯一权威仍是 Scripts/Algorithms/RuleState.cs。
  * 本文件只用于独立 HTML5 Demo，方法名与常量尽量与 C# 一一对应，便于逐段对照。
- * 回归：tools/replay_test.mjs 用 1–5 关黄金路线 + 第 6 关 60 步路线校验。
+ * 回归：tools/replay_test.mjs 用 1–5 关黄金路线 + L6/L7 结构校验。
  */
 
 export const INF = 1e9;
